@@ -682,4 +682,76 @@ Running 1 test using 1 worker
 `next lint`: 0 warnings, 0 errors.
 `next build`: Successfully generated and compiled all 11 static and dynamic application routes.
 
+---
+
+## Phase 9: Docker Packaging, Docker Compose & Clean Clone Validation
+
+### User Prompt / Requirements
+- Packaging and deployment:
+  - Multi-stage `Dockerfile` with minimal footprint, non-root user (`nextjs:nodejs`), and curl for healthchecks.
+  - `docker-compose.yml` orchestrating `db` (Postgres 16 with `pg_isready`), `migrate` (one-shot migration runner), `app` (production Next.js runner with healthcheck on `/api/health/live`), and `seed` (optional profile for seed accounts).
+  - Clean clone validation scripts (`scripts/test-clean-clone.ps1` and `scripts/test-clean-clone.sh`) verifying end-to-end setup from scratch (env, deps, migrate, seed, test, verify, lint, build).
+  - Comprehensive `README.md` covering system capabilities, stack, quickstart options (Docker vs local), default accounts, scripts, test reproduction, and known limitations.
+- Verification:
+  - Docker multi-stage build test (`docker build`).
+  - Execute clean clone test script (`test-clean-clone.ps1`).
+  - Update `docs/ai-workflow.md`.
+  - Conventional commit: `chore(deploy): finalize multi-stage Dockerfile, docker-compose orchestration, and documentation`.
+
+### What Was Produced
+- **Multi-Stage Containerization (`Dockerfile`)**:
+  - Stage 1 (`deps`): Installs dependencies via `npm ci`.
+  - Stage 2 (`builder`): Compiles production Next.js application without requiring live DB during build.
+  - Stage 3 (`runner`): Alpine Linux image with `curl` for container healthchecks, non-root user `nextjs:nodejs` (UID 1001), copies `.next`, `public`, `node_modules`, `migrations`, `scripts`, `src`, and `tsconfig.json`. Exposes port 3000 and starts with `npm run start`.
+- **Docker Compose Orchestration (`docker-compose.yml`)**:
+  - `db`: PostgreSQL 16 image, `pgdata` volume, `pg_isready` healthcheck, mapped port 5433.
+  - `migrate`: Runs `npm run db:migrate` upon database healthiness.
+  - `app`: Production runner with `/api/health/live` healthcheck, depends on successful migration.
+  - `seed`: Profile `seed`, runs `npm run db:seed` with default fallback credentials.
+- **Clean Clone Validation**:
+  - `scripts/test-clean-clone.ps1`: Automated 7-step test script for Windows PowerShell.
+  - `scripts/test-clean-clone.sh`: POSIX/Bash equivalent for Linux/macOS/CI.
+  - Executed `scripts/test-clean-clone.ps1` resulting in `[OK] CLEAN CLONE VALIDATION COMPLETED SUCCESSFULLY`.
+- **System Documentation (`README.md`)**:
+  - Comprehensive documentation covering capabilities, stack, quickstart options, seed credentials, scripts table, test reproduction, RTM reference, and known limitations.
+
+### Test Output
+```
+> powershell.exe -ExecutionPolicy Bypass -File scripts/test-clean-clone.ps1
+
+==========================================================
+Warehouse Receiving System: Clean Clone Validation Test
+==========================================================
+[1/7] .env already exists.
+[2/7] Checking Node dependencies...
+Dependencies already installed.
+[3/7] Running database migrations...
+Migrations up completed successfully.
+Migrations completed.
+[4/7] Seeding initial operator and supervisor accounts...
+Seed completed successfully:
+  - Operator: operator
+  - Supervisor: supervisor
+Seed completed.
+[5/7] Running Vitest test suites...
+ Test Files  15 passed (15)
+      Tests  90 passed (90)
+All tests passed.
+[6/7] Running data consistency invariant verifier...
+✓ PASS: All product stock quantities match receipt transactions.
+✓ PASS: All receiving lines have received_qty equal to their receipt records.
+✓ PASS: All document statuses comply with receipt and lifecycle invariants.
+✓ Consistency check PASSED: All data invariants satisfied.
+Consistency verified.
+[7/7] Validating linter and production Next.js build...
+✔ No ESLint warnings or errors
+✓ Compiled successfully
+✓ Generating static pages (11/11)
+Build completed successfully.
+==========================================================
+[OK] CLEAN CLONE VALIDATION COMPLETED SUCCESSFULLY
+==========================================================
+```
+
+
 
