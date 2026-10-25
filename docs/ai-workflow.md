@@ -78,3 +78,56 @@ User approved all 3 items:
 
 ---
 
+## Phase 2: Schema Migrations & Seed Script
+
+### User Prompt / Context
+- User requested getting the application running locally ("jalankan hingga bisa running..karena di run sendiri tidak bisa").
+- Addressed root cause: host Windows machine had native `postgres.exe` (PID 6248) listening on port 5432, preventing connections to Docker PostgreSQL. Configured `POSTGRES_PORT=5433` for mapped container access.
+
+### What Was Produced
+- **Port Mapping & Local Configuration**:
+  - Configured `"${POSTGRES_PORT:-5433}:5432"` in `docker-compose.yml`.
+  - Configured `.env` and `.env.example` with port 5433 for local developer access.
+  - Added `.dockerignore` to keep image builds clean and fast.
+- **10 Idempotent Migrations (`migrations/*.ts`)**:
+  1. `20261025000001_create_users_and_sessions.ts`: `users` (uuid PK, regex username, role check, bcrypt hash) and `sessions` (token hash PK, cascade delete, indexes).
+  2. `20261025000002_create_products.ts`: `products` (uppercase check, format check, active index).
+  3. `20261025000003_create_document_number_counters.ts`: `document_number_counters` (year PK, last_value).
+  4. `20261025000004_create_receiving_documents.ts`: `receiving_documents` (format check, status enum check, unique `(supplier_key, reference_number)` index, date and status indexes).
+  5. `20261025000005_create_receiving_lines.ts`: `receiving_lines` (expected_qty between 1 and 1000000, received_qty >= 0 and <= expected_qty, unique `(document_id, product_id)`).
+  6. `20261025000006_create_receipts.ts`: `receipts` (received_qty >= 1, batch_id, line and document indexes).
+  7. `20261025000007_create_inventory_transactions.ts`: `inventory_transactions` (type RECEIPT, positive quantity, unique receipt_id).
+  8. `20261025000008_create_idempotency_keys.ts`: `idempotency_keys` (PK on `(user_id, key)`, request_hash, jsonb response).
+  9. `20261025000009_create_audit_logs.ts`: `audit_logs` (bigint identity PK, action, before/after jsonb).
+  10. `20261025000010_create_append_only_triggers.ts`: triggers `receipts_no_mutation`, `inventory_transactions_no_mutation`, and `audit_logs_no_mutation` enforcing immutability (BR-13).
+- **Scripts**:
+  - `scripts/migrate.ts`: CLI migration runner using `node-pg-migrate` (`npm run db:migrate`).
+  - `scripts/seed.ts`: Seed runner upserting one Operator and one Supervisor (`npm run db:seed`) with bcrypt cost factor 12.
+- **Integration Tests**:
+  - `tests/integration/health.test.ts`: Verifies liveness (200), readiness (200 when up to date, 503 when pending), presence of all 10 tables, and seeded users.
+
+### Test Output
+```
+> warehouse-receiving-system@1.0.0 test
+> vitest run
+
+ RUN  v3.2.7 C:/Users/Refangga Lintar/Documents/TCL
+
+ ✓ tests/unit/env.test.ts (3 tests) 7ms
+ ✓ tests/unit/health.test.ts (5 tests) 5ms
+ ✓ tests/integration/health.test.ts (5 tests) 51ms
+
+ Test Files  3 passed (3)
+      Tests  13 passed (13)
+   Duration  770ms
+```
+
+### Running Server Output
+- Development server running on `http://localhost:3000`.
+- Health probes verified via HTTP:
+  - `GET http://localhost:3000/api/health/live` $\rightarrow$ `{"status":"ok"}`
+  - `GET http://localhost:3000/api/health/ready` $\rightarrow$ `{"status":"ok","database":"up","migrations":"up_to_date"}`
+
+---
+
+

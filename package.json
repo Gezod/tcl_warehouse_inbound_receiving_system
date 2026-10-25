@@ -14,8 +14,8 @@
     "test:integration": "vitest run tests/integration",
     "test:concurrency": "vitest run tests/concurrency",
     "test:e2e": "playwright test",
-    "db:migrate": "node-pg-migrate up",
-    "db:migrate:down": "node-pg-migrate down",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:migrate:down": "tsx scripts/migrate.ts down",
     "db:seed": "tsx scripts/seed.ts"
   },
   "dependencies": {
