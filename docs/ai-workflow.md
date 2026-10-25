@@ -130,4 +130,63 @@ User approved all 3 items:
 
 ---
 
+## Phase 3: Authentication & Role Guards
+
+### User Prompt / Requirements
+- Implement `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`.
+- Implement `requireRole` guard and `requireAuth` helper used across write endpoints.
+- Build Login page UI (centered card max-width 380px, wordmark, near-black button, accessible error handling).
+- Tests: 401 without session, 403 when an Operator calls a Supervisor-only endpoint.
+
+### What Was Produced
+- **Validation**:
+  - `src/lib/validation/auth.schema.ts`: Zod schema for `LoginRequest` (username 3-50 chars, password 8-128 chars).
+- **Core Domain & Security**:
+  - `src/types/domain.ts`: Core domain models (`User`, `CurrentUser`, `Role`, `Session`, `DocumentStatus`).
+  - `src/server/auth/token.ts`: Crypto utilities for 32-byte base64url session token generation, SHA-256 session ID hashing, and HTTP-only cookie construction with SameSite=Lax and Max-Age.
+  - `src/server/repositories/user.repository.ts`: Parameterized queries to find users by username (case-insensitive) or ID.
+  - `src/server/repositories/session.repository.ts`: Parameterized queries to insert sessions, lookup active sessions (checking `expires_at > now()` and `is_active = true`), and delete sessions.
+  - `src/server/services/auth.service.ts`:
+    - Constant-time bcrypt comparison against dummy hash when a username does not exist or is inactive, preventing username enumeration timing attacks.
+    - Session expiration timestamp calculated using `SESSION_TTL_HOURS`.
+    - Logout and `getCurrentUser` session verification.
+  - `src/server/auth/guard.ts`:
+    - `requireAuth`: Validates session cookie from request and returns user.
+    - `requireRole`: Validates user role against allowed list; throws 403 FORBIDDEN if unauthorized.
+    - `validateOrigin`: Enforces CSRF defense by rejecting state-changing requests (POST/PATCH/DELETE) with mismatched `Origin` headers.
+- **REST API Routes**:
+  - `app/api/auth/login/route.ts` (`POST /api/auth/login`)
+  - `app/api/auth/logout/route.ts` (`POST /api/auth/logout`)
+  - `app/api/auth/me/route.ts` (`GET /api/auth/me`)
+- **Frontend**:
+  - `src/lib/api-client.ts`: Typed fetch wrapper handling cookie credentials and OpenAPI Error schema mapping.
+  - `app/(auth)/login/page.tsx`: Centered 380px card, wordmark, field and page-level error alerts (`role="alert"`), near-black primary button with disabled states.
+- **Automated Tests**:
+  - `tests/unit/auth-guard.test.ts`: Role guard permission checks, 403 on Operator access to Supervisor actions, CSRF origin checks, schema validation.
+  - `tests/integration/auth.test.ts`: 401 without session, 401 on wrong username/password, 200 on login with Set-Cookie, 200 on `/auth/me` with session, 403 on role guard check, 204 on logout and subsequent 401.
+
+### Test Output
+```
+> warehouse-receiving-system@1.0.0 test
+> vitest run
+
+ RUN  v3.2.7 C:/Users/Refangga Lintar/Documents/TCL
+
+ ✓ tests/unit/env.test.ts (3 tests) 8ms
+ ✓ tests/unit/health.test.ts (5 tests) 7ms
+ ✓ tests/integration/health.test.ts (5 tests) 76ms
+ ✓ tests/unit/auth-guard.test.ts (5 tests) 10ms
+ ✓ tests/integration/auth.test.ts (6 tests) 1119ms
+
+ Test Files  5 passed (5)
+      Tests  24 passed (24)
+   Duration  2.30s
+```
+
+`next lint` passed with 0 warnings or errors.
+`next build` passed successfully generating `/login` and dynamic API routes `/api/auth/login`, `/api/auth/logout`, `/api/auth/me`.
+
+---
+
+
 
