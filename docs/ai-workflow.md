@@ -34,3 +34,47 @@ User approved all 3 items:
 - Initialized `docs/ai-workflow.md`.
 
 ---
+
+## Phase 1: Foundation Scaffold & Health Probes
+
+### User Prompt / Requirements
+- Next.js (App Router, TypeScript) scaffold, Tailwind CSS, shadcn/ui primitives configuration, ESLint.
+- Docker Compose with PostgreSQL (postgres:16, volume, healthcheck).
+- Startup environment validation (`src/server/config/env.ts` with Zod).
+- `.env.example` with documented environment variables.
+- Health endpoints: `GET /api/health/live` (200 with status: ok), `GET /api/health/ready` (503 when db unreachable or migrations pending, 200 when up to date).
+- Unit tests for environment validation and health endpoints.
+
+### What Was Produced
+- Initialized `package.json` with exact stack: `next@14.2.24`, `react@18.3.1`, `pg`, `bcryptjs`, `zod`, `node-pg-migrate`, `tailwindcss`, `vitest`.
+- Configured `tsconfig.json`, `next.config.mjs` (security headers), `tailwind.config.ts` (design tokens: near-black, borders #E5E7EB, radii, status colours), `postcss.config.mjs`, `.eslintrc.json`, `vitest.config.ts`.
+- Created `.gitignore` ensuring `.env` is never committed while `.env.example` is tracked.
+- Created `docker-compose.yml` (`db`, `migrate`, `app`, `seed` services) and multi-stage `Dockerfile`.
+- Implemented `src/server/config/env.ts` for strict startup environment validation.
+- Implemented `src/server/db/pool.ts` providing managed `pg.Pool` connection pool.
+- Implemented `src/server/errors.ts` (`AppError` and OpenAPI error codes) and `src/server/http/respond.ts` (standardized JSON and error response mapping).
+- Implemented `src/server/services/health.service.ts` checking liveness, database connectivity, and pending migrations against `pgmigrations`.
+- Created route handlers `app/api/health/live/route.ts` and `app/api/health/ready/route.ts`.
+- Created root layout `app/layout.tsx` with Inter font and `app/globals.css`.
+- Wrote unit tests in `tests/unit/env.test.ts` and `tests/unit/health.test.ts`.
+
+### Test Output
+```
+> warehouse-receiving-system@1.0.0 test:unit
+> vitest run tests/unit
+
+ RUN  v3.2.7 C:/Users/Refangga Lintar/Documents/TCL
+
+ ✓ tests/unit/env.test.ts (3 tests) 6ms
+ ✓ tests/unit/health.test.ts (5 tests) 6ms
+
+ Test Files  2 passed (2)
+      Tests  8 passed (8)
+   Duration  786ms
+```
+
+`next lint` passed with zero errors or warnings.
+`next build` passed successfully creating optimized production build and registering `/api/health/live` and `/api/health/ready` dynamic routes.
+
+---
+
