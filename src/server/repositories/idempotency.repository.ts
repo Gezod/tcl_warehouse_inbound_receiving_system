@@ -60,33 +60,70 @@ export async function findIdempotencyKey(
   };
 }
 
-export async function saveIdempotencyKey(
+/**
+ * Implements Tech Spec 9.3 step 5 & 6:
+ * Inserts initial idempotency placeholder row with ON CONFLICT DO NOTHING.
+ * If concurrent request is running with the same key, PostgreSQL index lock pauses
+ * this insert until the first request commits or rolls back.
+ */
+export async function insertInitialIdempotencyKey(
   userId: string,
   key: string,
   requestHash: string,
+  client: PoolClient
+): Promise<{ inserted: boolean; record: StoredIdempotencyRecord | null }> {
+  const insertQuery = `
+    INSERT INTO idempotency_keys (user_id, key, request_hash, response_status, response_body, created_at)
+    VALUES ($1, $2, $3, 0, '{}'::jsonb, now())
+    ON CONFLICT (user_id, key) DO NOTHING
+    RETURNING user_id, key, request_hash, response_status, response_body, created_at;
+  `;
+  const insertRes = await client.query(insertQuery, [userId, key, requestHash]);
+
+  if (insertRes.rows.length > 0) {
+    return { inserted: true, record: null };
+  }
+
+  // Row already exists or concurrent request committed
+  const selectQuery = `
+    SELECT user_id, key, request_hash, response_status, response_body, created_at
+    FROM idempotency_keys
+    WHERE user_id = $1 AND key = $2;
+  `;
+  const selectRes = await client.query(selectQuery, [userId, key]);
+  const row = selectRes.rows[0];
+
+  return {
+    inserted: false,
+    record: row
+      ? {
+          userId: row.user_id,
+          key: row.key,
+          requestHash: row.request_hash,
+          responseStatus: row.response_status,
+          responseBody: row.response_body,
+          createdAt: row.created_at.toISOString(),
+        }
+      : null,
+  };
+}
+
+export async function updateFinalIdempotencyKey(
+  userId: string,
+  key: string,
   responseStatus: number,
   responseBody: any,
-  client?: PoolClient
+  client: PoolClient
 ): Promise<void> {
-  const db = client || getPool();
   const query = `
-    INSERT INTO idempotency_keys (
-      user_id,
-      key,
-      request_hash,
-      response_status,
-      response_body,
-      created_at
-    )
-    VALUES ($1, $2, $3, $4, $5, now())
-    ON CONFLICT (user_id, key) DO UPDATE 
-    SET response_status = EXCLUDED.response_status,
-        response_body = EXCLUDED.response_body;
+    UPDATE idempotency_keys
+    SET response_status = $3,
+        response_body = $4
+    WHERE user_id = $1 AND key = $2;
   `;
-  await db.query(query, [
+  await client.query(query, [
     userId,
     key,
-    requestHash,
     responseStatus,
     JSON.stringify(responseBody),
   ]);

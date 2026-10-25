@@ -2,9 +2,9 @@ import { CurrentUser, ReceiptBatchResult, User } from '@/src/types/domain';
 import { requireRole } from '../auth/guard';
 import { ReceiptBatchCreateInput } from '@/src/lib/validation/receipt.schema';
 import {
-  findIdempotencyKey,
   hashRequestBody,
-  saveIdempotencyKey,
+  insertInitialIdempotencyKey,
+  updateFinalIdempotencyKey,
 } from '../repositories/idempotency.repository';
 import { executeReceiptBatch } from '../repositories/receipt.repository';
 import { withTransaction } from '../db/tx';
@@ -29,14 +29,20 @@ export async function recordReceipts(
   const requestHash = hashRequestBody(input);
 
   return withTransaction(async (client) => {
-    // 3. Idempotency check (BR-10, US-07)
-    const stored = await findIdempotencyKey(user.id, idempotencyKey, client);
-    if (stored) {
-      if (stored.requestHash === requestHash) {
-        // Cached replay: returns 200 with original result without creating transactions
+    // 3. Idempotency check & concurrent locking (Tech Spec 9.3 step 5 & 6)
+    const { inserted, record } = await insertInitialIdempotencyKey(
+      user.id,
+      idempotencyKey,
+      requestHash,
+      client
+    );
+
+    if (!inserted && record) {
+      if (record.requestHash === requestHash) {
+        // Cached replay: returns 200 with original result without creating duplicate transactions
         return {
           statusCode: 200,
-          data: stored.responseBody as ReceiptBatchResult,
+          data: record.responseBody as ReceiptBatchResult,
         };
       } else {
         // Reused key with different payload
@@ -58,11 +64,10 @@ export async function recordReceipts(
       client
     );
 
-    // 5. Store response for idempotency replay
-    await saveIdempotencyKey(
+    // 5. Finalize response for idempotency replay
+    await updateFinalIdempotencyKey(
       user.id,
       idempotencyKey,
-      requestHash,
       201,
       result,
       client

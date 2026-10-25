@@ -580,3 +580,106 @@ User approved all 3 items:
 `next lint`: 0 warnings, 0 errors.
 `next build`: Successfully generated production route `/users` and dynamic API handlers `/api/users`, `/api/users/[userId]`.
 
+---
+
+## Phase 8: Full Testing Suite, Concurrency Tests, Consistency Verifier, E2E Test & Docs
+
+### User Prompt / Requirements
+- Complete automated testing suite spanning all levels:
+  - Concurrency tests (`tests/concurrency/concurrency.test.ts`):
+    - 20 concurrent receipts on line with expected 10 sent in parallel through a connection pool of >= 20 connections. Exactly 10 succeed with 201, exactly 10 fail with 422 `OVER_RECEIPT`, line ends with `received_qty = 10`, exactly 10 receipt rows and 10 inventory transactions.
+    - 10 parallel requests with identical idempotency key and body. All return 200/201 replay, exactly one write, line incremented once.
+  - Data consistency verifier (`scripts/verify-consistency.ts` & `tests/integration/consistency.test.ts`):
+    - Automated SQL invariant checks: NFR-01 stock balances equal sum of transactions, line received quantity cache equals sum of line receipts, document status lifecycle invariants.
+    - Added `npm run verify` script to `package.json`.
+  - End-to-End browser workflow (`tests/e2e/receiving-flow.spec.ts`):
+    - Playwright test covering: Supervisor logs in -> creates product -> creates doc draft -> adds line (10 pcs) -> submits doc (`OPEN`) -> signs out -> Operator logs in -> records partial receipt (4 pcs) -> verifies on-hand inventory (4 pcs) -> signs out -> Supervisor logs in -> completes remaining receipt (6 pcs) -> completes document (`COMPLETED`) -> verifies terminal immutable state.
+  - Comprehensive testing documentation (`docs/testing.md`):
+    - Testing Strategy & Hierarchy.
+    - Requirements Traceability Matrix mapping FR-01..21, BR-01..16, NFR-01..06 to test files.
+    - Reproduction commands for all test suites.
+    - Concurrency test results and evidence.
+    - Invariant verifier execution evidence.
+    - Dependency audit (`npm audit`) assessment and findings.
+- Verification:
+  - Run all Vitest suites (`npm test`), consistency verifier (`npm run verify`), Playwright E2E (`npm run test:e2e`), linter (`npm run lint`), and build (`npm run build`).
+
+### What Was Produced
+- **Concurrency Testing & Idempotency Locking Engine**:
+  - `tests/concurrency/concurrency.test.ts`: High-concurrency race condition test suite with connection pool >= 20.
+  - `src/server/repositories/idempotency.repository.ts`: Added `insertInitialIdempotencyKey` with `ON CONFLICT DO NOTHING` locking row and `updateFinalIdempotencyKey`.
+  - `src/server/services/receipt.service.ts`: Updated to implement Tech Spec 9.3 steps 5 & 6 (transactional idempotency key reservation with tuple lock).
+- **Data Invariant Consistency Verifier**:
+  - `scripts/verify-consistency.ts`: Automated standalone CLI consistency verifier.
+  - `tests/integration/consistency.test.ts`: Vitest automated test suite running the 3 invariant checks.
+  - `package.json`: Added `"verify": "tsx scripts/verify-consistency.ts"` and `"test:e2e": "playwright test"`.
+- **End-to-End Testing (Playwright)**:
+  - `playwright.config.ts`: Playwright test runner configuration with Chromium project and localhost:3000 baseURL.
+  - `tests/e2e/receiving-flow.spec.ts`: Full browser receiving lifecycle test.
+  - `app/(app)/layout.tsx`: Added explicit `#desktop-sign-out-btn` and `#mobile-sign-out-btn` IDs.
+  - `app/(app)/receiving-documents/new/page.tsx`: Added form input IDs (`#supplierName`, `#referenceNumber`, `#expectedArrivalDate`, `#notes`) and submit button text.
+  - `components/receiving/lines-table.tsx`: Added `id="lines-table"`.
+- **Documentation**:
+  - `docs/testing.md`: Complete testing documentation with strategy, RTM, reproduction steps, concurrency results, invariant checks, and security audit analysis.
+
+### Test Output
+```
+> warehouse-receiving-system@1.0.0 test
+> vitest run
+
+ RUN  v3.2.7 C:/Users/Refangga Lintar/Documents/TCL
+
+ ✓ tests/unit/lifecycle.test.ts (16 tests) 16ms
+ ✓ tests/unit/receipt-rules.test.ts (7 tests) 15ms
+ ✓ tests/integration/health.test.ts (5 tests) 96ms
+ ✓ tests/integration/consistency.test.ts (3 tests) 109ms
+ ✓ tests/unit/auth-guard.test.ts (5 tests) 16ms
+ ✓ tests/unit/user-rules.test.ts (6 tests) 13ms
+ ✓ tests/unit/env.test.ts (3 tests) 14ms
+ ✓ tests/unit/product-rules.test.ts (5 tests) 12ms
+ ✓ tests/unit/health.test.ts (5 tests) 9ms
+ ✓ tests/integration/products.test.ts (7 tests) 1024ms
+ ✓ tests/integration/receiving-documents.test.ts (10 tests) 1266ms
+ ✓ tests/concurrency/concurrency.test.ts (2 tests) 1318ms
+ ✓ tests/integration/receipts.test.ts (3 tests) 1242ms
+ ✓ tests/integration/auth.test.ts (6 tests) 1724ms
+ ✓ tests/integration/users.test.ts (7 tests) 1749ms
+
+ Test Files  15 passed (15)
+      Tests  90 passed (90)
+   Duration  3.20s
+```
+
+```
+> warehouse-receiving-system@1.0.0 verify
+> tsx scripts/verify-consistency.ts
+
+--- Warehouse Receiving System: Data Consistency Verifier (NFR-01) ---
+
+[Check 1/3] Verifying NFR-01: Product stock equals sum of receipt transactions...
+✓ PASS: All product stock quantities match receipt transactions.
+
+[Check 2/3] Verifying Line Cache Invariant: line.received_qty = sum(receipts)...
+✓ PASS: All receiving lines have received_qty equal to their receipt records.
+
+[Check 3/3] Verifying Document Status & Lifecycle Invariants...
+✓ PASS: All document statuses comply with receipt and lifecycle invariants.
+
+✓ Consistency check PASSED: All data invariants satisfied.
+```
+
+```
+> warehouse-receiving-system@1.0.0 test:e2e
+> playwright test
+
+Running 1 test using 1 worker
+
+  ok 1 [chromium] › tests\e2e\receiving-flow.spec.ts:10:7 › End-to-End Inbound Receiving Workflow › executes complete receiving lifecycle: Supervisor product creation, doc draft, line add, submit, Operator receipt, stock reflection, and completion (10.3s)
+
+  1 passed (11.8s)
+```
+
+`next lint`: 0 warnings, 0 errors.
+`next build`: Successfully generated and compiled all 11 static and dynamic application routes.
+
+

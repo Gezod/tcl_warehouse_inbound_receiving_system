@@ -92,18 +92,21 @@ function NewReceivingDocumentForm() {
 
       {/* Form Card */}
       <form
+        data-hydrated="true"
         onSubmit={handleSubmit}
         className="rounded-card border border-border bg-surface p-6 shadow-sm space-y-5 text-sm"
       >
         {/* Supplier Name */}
         <div>
-          <label className="block text-xs font-medium text-secondary mb-1">
+          <label htmlFor="supplierName" className="block text-xs font-medium text-secondary mb-1">
             <span className="flex items-center gap-1.5">
               <Building className="h-3.5 w-3.5 text-muted" />
               Supplier Name <span className="text-red-500">*</span>
             </span>
           </label>
           <input
+            id="supplierName"
+            name="supplierName"
             type="text"
             required
             maxLength={150}
@@ -116,13 +119,15 @@ function NewReceivingDocumentForm() {
 
         {/* Reference Number */}
         <div>
-          <label className="block text-xs font-medium text-secondary mb-1">
+          <label htmlFor="referenceNumber" className="block text-xs font-medium text-secondary mb-1">
             <span className="flex items-center gap-1.5">
               <Hash className="h-3.5 w-3.5 text-muted" />
               Reference Number / PO Number (optional)
             </span>
           </label>
           <input
+            id="referenceNumber"
+            name="referenceNumber"
             type="text"
             maxLength={60}
             placeholder="e.g. PO-2026-891"
@@ -137,13 +142,15 @@ function NewReceivingDocumentForm() {
 
         {/* Expected Arrival Date */}
         <div>
-          <label className="block text-xs font-medium text-secondary mb-1">
+          <label htmlFor="expectedArrivalDate" className="block text-xs font-medium text-secondary mb-1">
             <span className="flex items-center gap-1.5">
               <Calendar className="h-3.5 w-3.5 text-muted" />
               Expected Arrival Date (optional)
             </span>
           </label>
           <input
+            id="expectedArrivalDate"
+            name="expectedArrivalDate"
             type="date"
             value={expectedArrivalDate}
             onChange={(e) => setExpectedArrivalDate(e.target.value)}
@@ -153,13 +160,15 @@ function NewReceivingDocumentForm() {
 
         {/* Notes */}
         <div>
-          <label className="block text-xs font-medium text-secondary mb-1">
+          <label htmlFor="notes" className="block text-xs font-medium text-secondary mb-1">
             <span className="flex items-center gap-1.5">
               <FileText className="h-3.5 w-3.5 text-muted" />
               Notes (optional)
             </span>
           </label>
           <textarea
+            id="notes"
+            name="notes"
             rows={3}
             maxLength={1000}
             placeholder="Delivery instructions, dock bay number, or carrier notes..."
@@ -178,12 +187,13 @@ function NewReceivingDocumentForm() {
             Cancel
           </Link>
           <button
+            id="create-document-btn"
             type="submit"
             disabled={isSubmitting || !supplierName.trim()}
             className="inline-flex items-center gap-1.5 rounded-button bg-primary px-4 py-2 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
           >
             <Check className="h-4 w-4" />
-            {isSubmitting ? 'Creating Document...' : 'Create in DRAFT'}
+            {isSubmitting ? 'Creating Document...' : 'Create Receiving Document'}
           </button>
         </div>
       </form>

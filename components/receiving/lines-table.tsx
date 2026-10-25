@@ -191,7 +191,7 @@ export function LinesTable({
 
       {/* Table */}
       <div className="overflow-x-auto rounded-card border border-border bg-surface shadow-sm">
-        <table className="w-full text-left text-sm border-collapse">
+        <table id="lines-table" className="w-full text-left text-sm border-collapse">
           <thead>
             <tr className="border-b border-border bg-surface-hover text-xs font-medium uppercase tracking-wider text-muted">
               <th className="px-4 py-3">SKU</th>

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiClient, ApiClientError } from '@/src/lib/api-client';
 
@@ -11,6 +11,11 @@ export default function LoginPage() {
   const [fieldErrors, setFieldErrors] = useState<{ username?: string; password?: string }>({});
   const [pageError, setPageError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  useEffect(() => {
+    setIsHydrated(true);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,7 +84,14 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} noValidate className="space-y-4">
+        <form
+          method="POST"
+          action="#"
+          onSubmit={handleSubmit}
+          noValidate
+          data-hydrated={isHydrated ? 'true' : 'false'}
+          className="space-y-4"
+        >
           <div>
             <label
               htmlFor="username"

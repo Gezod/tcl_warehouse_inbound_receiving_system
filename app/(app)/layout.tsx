@@ -202,6 +202,7 @@ export default function AppLayout({
                 </span>
               </div>
               <button
+                id="mobile-sign-out-btn"
                 type="button"
                 onClick={handleLogout}
                 disabled={isLoggingOut}
@@ -284,6 +285,7 @@ export default function AppLayout({
                 </span>
               </div>
               <button
+                id="desktop-sign-out-btn"
                 type="button"
                 onClick={handleLogout}
                 disabled={isLoggingOut}
