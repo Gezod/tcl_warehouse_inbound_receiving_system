@@ -413,3 +413,94 @@ export async function cancelDocument(
     return updated!;
   });
 }
+
+export async function completeDocument(
+  user: User | CurrentUser,
+  documentId: string,
+  requestId?: string
+): Promise<ReceivingDocumentDetail> {
+  // FR-12: Supervisor only
+  requireRole(user, ['SUPERVISOR']);
+
+  return withTransaction(async (client) => {
+    // 1. Lock document FOR UPDATE
+    const doc = await findReceivingDocumentById(documentId, { forUpdate: true }, client);
+    if (!doc) {
+      throw new AppError(404, 'NOT_FOUND', 'Receiving document not found.');
+    }
+
+    if (doc.status === 'COMPLETED' || doc.status === 'CANCELLED') {
+      throw new AppError(
+        409,
+        'INVALID_DOCUMENT_STATE',
+        `Document is already ${doc.status} and cannot be completed.`
+      );
+    }
+
+    if (doc.status !== 'PARTIALLY_RECEIVED' && doc.status !== 'OPEN') {
+      throw new AppError(
+        409,
+        'INVALID_DOCUMENT_STATE',
+        `Only OPEN or PARTIALLY_RECEIVED documents can be completed (current status: ${doc.status}).`
+      );
+    }
+
+    // 2. Lock lines FOR UPDATE in ascending ID order (Tech Spec 9.4 step 3)
+    const linesRes = await client.query(
+      `SELECT id, expected_qty, received_qty FROM receiving_lines WHERE document_id = $1 ORDER BY id ASC FOR UPDATE;`,
+      [documentId]
+    );
+
+    if (linesRes.rows.length === 0) {
+      throw new AppError(
+        422,
+        'NO_LINES',
+        'Cannot complete a document with no lines.'
+      );
+    }
+
+    // 3. Verify that every line is fully received (BR-06, US-08)
+    const unfulfilledDetails = [];
+    for (const line of linesRes.rows) {
+      const remaining = line.expected_qty - line.received_qty;
+      if (remaining > 0) {
+        unfulfilledDetails.push({
+          lineId: line.id,
+          requested: line.expected_qty,
+          remaining,
+          code: 'DOCUMENT_NOT_FULLY_RECEIVED',
+          message: `Line has remaining quantity of ${remaining}. All lines must be fully received before completing.`,
+        });
+      }
+    }
+
+    if (unfulfilledDetails.length > 0) {
+      throw new AppError(
+        422,
+        'DOCUMENT_NOT_FULLY_RECEIVED',
+        'Cannot complete document because one or more lines are not fully received.',
+        undefined,
+        unfulfilledDetails
+      );
+    }
+
+    // 4. Update status to COMPLETED
+    await updateReceivingDocumentStatus(documentId, 'COMPLETED', { completedAt: true }, client);
+
+    // 5. Write audit log (FR-21)
+    await client.query(
+      `INSERT INTO audit_logs (request_id, actor_id, action, entity_type, entity_id, after_data, created_at)
+       VALUES ($1, $2, 'document.complete', 'receiving_document', $3, $4, now());`,
+      [
+        requestId || null,
+        user.id,
+        documentId,
+        JSON.stringify({ status: 'COMPLETED', completedAt: new Date().toISOString() }),
+      ]
+    );
+
+    const updated = await findReceivingDocumentById(documentId, {}, client);
+    return updated!;
+  });
+}
+

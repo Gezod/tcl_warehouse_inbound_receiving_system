@@ -354,6 +354,99 @@ User approved all 3 items:
 `next lint`: 0 warnings, 0 errors.
 `next build`: Successfully compiled and generated static and dynamic routes for `/receiving-documents`, `/receiving-documents/new`, and `/receiving-documents/[id]`.
 
+---
+
+## Phase 6: Receipts, Completion, Cancellation, and Inventory API & UI
+
+### User Prompt / Requirements
+- Receipts recording:
+  - Idempotency key handling (BR-10, US-07).
+  - Row locking: lock `receiving_documents` `FOR UPDATE`, then `receiving_lines` `FOR UPDATE` in ascending ID order (Tech Spec 3.2, 9.3 step 8, NFR-02).
+  - Over-receipt validation (BR-03, US-05, US-06) returning 422 with structured `details` array.
+  - Multi-line receipt batch committed atomically in one database transaction.
+  - Automatic inventory update: write `receipts`, insert `inventory_transactions` (`RECEIPT`), increment `received_qty` on line.
+  - Automatic status transition: if status was `OPEN`, update to `PARTIALLY_RECEIVED` (PRD Section 7, D-02).
+  - Write audit log entry (`receipt.record`).
+- Document completion endpoint:
+  - Supervisor only (FR-12).
+  - Validates that every line is fully received (BR-06, US-08).
+  - Sets `completed_at = now()`, `status = COMPLETED`, writes audit log (`document.complete`).
+- Inventory listing endpoint:
+  - `GET /api/inventory` (FR-16).
+  - Lists all products (including 0 on-hand), onHand quantity computed dynamically from transactions, available quantity, and `lastMovementAt`.
+- Transactions listing endpoint:
+  - `GET /api/transactions` (FR-17).
+  - Immutable transaction log, filterable by product, document, date range, with pagination.
+- Frontend:
+  - Record receipts dialog on document detail screen.
+  - Complete document action on header card.
+  - Receipt history table on document detail screen.
+  - Inventory management page (`/inventory`).
+  - Transaction history page (`/transactions`).
+- Automated Tests:
+  - Unit tests for receipt schema, over-receipt calculation, canonical idempotency hashing.
+  - Integration tests against PostgreSQL verifying partial receipt, over-receipt rejection, idempotency replay (200 cached) and key reuse detection (409), stock reflection, completion rules, and terminal states.
+
+### What Was Produced
+- **Domain & Validation**:
+  - `src/types/domain.ts`: Added `ReceiptBatchResult`, `InventoryItem`, `InventoryPage`, `InventoryTransaction`, `TransactionPage`.
+  - `src/lib/validation/receipt.schema.ts`: Zod schema for `ReceiptBatchCreate` (validates `receivedAt` is not in future > 5 min, unique lineIds in batch, quantities >= 1, max 100 items) and `Idempotency-Key` header (8-64 chars).
+  - `src/lib/validation/inventory.schema.ts` & `src/lib/validation/transaction.schema.ts`: Query validation schemas.
+- **Repositories**:
+  - `src/server/repositories/idempotency.repository.ts`: Deterministic canonical JSON serializer, SHA-256 request hashing, and atomic idempotency persistence.
+  - `src/server/repositories/receipt.repository.ts`: Atomic execution of batch receipts with deadlock-free row locking order (`receiving_documents` `FOR UPDATE` -> `receiving_lines` `ORDER BY id ASC FOR UPDATE`), batch ID assignment, inventory transaction logging, audit trails, and status update.
+  - `src/server/repositories/inventory.repository.ts`: Implemented dynamic on-hand stock calculation query from Tech Spec 3.2.
+  - `src/server/repositories/transaction.repository.ts`: Querying immutable inventory transactions with joined product SKU and document number.
+- **Service Layer**:
+  - `src/server/services/receipt.service.ts`: Role verification, idempotency replay with 200 cache return, key reuse conflict detection (409), and atomic receipt batch execution.
+  - `src/server/services/receiving-document.service.ts`: Added `completeDocument` verifying all lines received with ascending line ID locks.
+  - `src/server/services/inventory.service.ts` & `src/server/services/transaction.service.ts`: Service methods for inventory and transaction retrieval.
+- **Route Handlers**:
+  - `POST /api/receiving-documents/[documentId]/receipts`: Validates `Idempotency-Key` and processes receipt batches.
+  - `POST /api/receiving-documents/[documentId]/complete`: Marks fully received document as `COMPLETED`.
+  - `GET /api/inventory`: Lists products with on-hand and available quantities.
+  - `GET /api/transactions`: Lists stock movement history.
+- **Frontend UI Components & Pages**:
+  - `components/receiving/record-receipt-dialog.tsx`: Operator modal to record receipts with "Receive All Remaining" helper, per-line inputs, and automated UUID idempotency keys.
+  - `components/receiving/document-header-card.tsx`: Updated with "Record Receipts" and "Complete Document" action buttons based on status and user role.
+  - `app/(app)/receiving-documents/[id]/page.tsx`: Integrated receipt modal, completion handler, and Receipt History audit table.
+  - `app/(app)/inventory/page.tsx`: Inventory screen displaying on-hand, available stock, status, and last movement timestamp.
+  - `app/(app)/transactions/page.tsx`: Transaction history screen with date range filtering.
+- **Automated Tests**:
+  - `tests/unit/receipt-rules.test.ts` (7 tests): Validates canonical JSON hashing across key permutations, rejection of future dates, rejection of duplicate batch lineIds, and key length constraints.
+  - `tests/integration/receipts.test.ts` (3 extensive tests):
+    - Validates Idempotency-Key header requirement.
+    - Rejects over-receipt with 422 OVER_RECEIPT with per-line details; rolls back completely.
+    - Partial receipt transitions status to PARTIALLY_RECEIVED, increments stock, logs inventory transactions, replays cached response on identical key (200), rejects key reuse on different payload with 409, prevents cancellation of documents with receipts (409), blocks premature completion (422), allows completion when 100% received, and enforces terminal read-only state (409).
+
+### Test Output
+```
+> warehouse-receiving-system@1.0.0 test
+> vitest run
+
+ RUN  v3.2.7 C:/Users/Refangga Lintar/Documents/TCL
+
+ ✓ tests/unit/product-rules.test.ts (5 tests) 15ms
+ ✓ tests/unit/env.test.ts (3 tests) 12ms
+ ✓ tests/unit/lifecycle.test.ts (16 tests) 13ms
+ ✓ tests/unit/health.test.ts (5 tests) 9ms
+ ✓ tests/unit/receipt-rules.test.ts (7 tests) 16ms
+ ✓ tests/integration/health.test.ts (5 tests) 89ms
+ ✓ tests/unit/auth-guard.test.ts (5 tests) 14ms
+ ✓ tests/integration/products.test.ts (7 tests) 890ms
+ ✓ tests/integration/receiving-documents.test.ts (10 tests) 1042ms
+ ✓ tests/integration/receipts.test.ts (3 tests) 971ms
+ ✓ tests/integration/auth.test.ts (6 tests) 1438ms
+
+ Test Files  11 passed (11)
+      Tests  72 passed (72)
+   Duration  2.73s
+```
+
+`next lint`: 0 warnings, 0 errors.
+`next build`: Successfully generated optimized production pages for `/inventory`, `/transactions`, `/receiving-documents/[id]`, and receipt API endpoints.
+
+
 
 
 

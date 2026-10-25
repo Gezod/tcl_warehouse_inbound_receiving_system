@@ -12,8 +12,11 @@ interface DocumentHeaderCardProps {
   onSubmit: () => void;
   onEditHeader: () => void;
   onCancel: () => void;
+  onRecordReceipt?: () => void;
+  onComplete?: () => void;
   isSubmitting?: boolean;
   isCancelling?: boolean;
+  isCompleting?: boolean;
 }
 
 export function DocumentHeaderCard({
@@ -22,8 +25,11 @@ export function DocumentHeaderCard({
   onSubmit,
   onEditHeader,
   onCancel,
+  onRecordReceipt,
+  onComplete,
   isSubmitting = false,
   isCancelling = false,
+  isCompleting = false,
 }: DocumentHeaderCardProps) {
   const isSupervisor = currentUser?.role === 'SUPERVISOR';
   const isDraft = document.status === 'DRAFT';
@@ -45,6 +51,19 @@ export function DocumentHeaderCard({
     !isCompleted &&
     (document.totals?.receivedQty ?? 0) === 0;
 
+  // Can record receipt: OPEN or PARTIALLY_RECEIVED, with remaining quantity > 0
+  const canRecordReceipt =
+    isOpenOrPartial &&
+    (document.totals?.remainingQty ?? 0) > 0 &&
+    !!onRecordReceipt;
+
+  // Can complete: Supervisor, OPEN or PARTIALLY_RECEIVED, all lines received (remaining === 0)
+  const canComplete =
+    isSupervisor &&
+    isOpenOrPartial &&
+    (document.totals?.remainingQty ?? 0) === 0 &&
+    !!onComplete;
+
   return (
     <div className="rounded-card border border-border bg-surface p-6 shadow-sm space-y-6">
       {/* Top bar: Document Number, Status, and Actions */}
@@ -63,6 +82,29 @@ export function DocumentHeaderCard({
 
         {/* Action buttons */}
         <div className="flex items-center gap-2 flex-wrap">
+          {canRecordReceipt && (
+            <button
+              type="button"
+              onClick={onRecordReceipt}
+              className="inline-flex items-center gap-1.5 rounded-button bg-primary px-3.5 py-1.5 text-xs font-medium text-white hover:opacity-90 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Record Receipts
+            </button>
+          )}
+
+          {canComplete && (
+            <button
+              type="button"
+              onClick={onComplete}
+              disabled={isCompleting}
+              className="inline-flex items-center gap-1.5 rounded-button bg-status-completed-border px-3.5 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50 shadow-sm focus:outline-none focus:ring-2 focus:ring-status-completed-border"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              {isCompleting ? 'Completing...' : 'Complete Document'}
+            </button>
+          )}
+
           {canEdit && (
             <button
               type="button"

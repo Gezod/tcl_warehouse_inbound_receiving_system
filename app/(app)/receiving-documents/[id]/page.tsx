@@ -9,8 +9,9 @@ import { DocumentHeaderCard } from '@/components/receiving/document-header-card'
 import { LinesTable } from '@/components/receiving/lines-table';
 import { AddLineDialog } from '@/components/receiving/add-line-dialog';
 import { EditHeaderDialog } from '@/components/receiving/edit-header-dialog';
+import { RecordReceiptDialog } from '@/components/receiving/record-receipt-dialog';
 import { ToastProvider, useToast } from '@/components/ui/toast';
-import { ArrowLeft, AlertCircle } from 'lucide-react';
+import { ArrowLeft, AlertCircle, History } from 'lucide-react';
 
 export default function ReceivingDocumentDetailPage() {
   return (
@@ -34,8 +35,10 @@ function DocumentDetailContent() {
   // Dialog states
   const [isAddLineOpen, setIsAddLineOpen] = useState(false);
   const [isEditHeaderOpen, setIsEditHeaderOpen] = useState(false);
+  const [isRecordReceiptOpen, setIsRecordReceiptOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
 
   // Load user
   useEffect(() => {
@@ -99,6 +102,31 @@ function DocumentDetailContent() {
     }
   };
 
+  // Handle complete document
+  const handleCompleteDocument = async () => {
+    if (!document) return;
+    if (
+      !confirm(
+        `Are you sure you want to mark document ${document.documentNumber} as COMPLETED?`
+      )
+    ) {
+      return;
+    }
+
+    setIsCompleting(true);
+    try {
+      const updated = await apiClient.post<ReceivingDocumentDetail>(
+        `/receiving-documents/${document.id}/complete`
+      );
+      showToast(`Document ${document.documentNumber} is now COMPLETED.`);
+      setDocument(updated);
+    } catch (err: any) {
+      alert(err.message || 'Failed to complete document.');
+    } finally {
+      setIsCompleting(false);
+    }
+  };
+
   // Handle cancel document
   const handleCancelDocument = async () => {
     if (!document) return;
@@ -126,7 +154,6 @@ function DocumentDetailContent() {
 
   // Handle line added
   const handleLineAdded = (newLine: ReceivingLine) => {
-    // Reload full document so totals update cleanly
     loadDocument();
   };
 
@@ -139,6 +166,20 @@ function DocumentDetailContent() {
   const handleLineDeleted = (lineId: string) => {
     loadDocument();
   };
+
+  // Extract all receipts across lines sorted newest first
+  const allReceipts = (document?.lines || [])
+    .flatMap((line) =>
+      (line.receipts || []).map((r) => ({
+        ...r,
+        productSku: line.product.sku,
+        productName: line.product.name,
+      }))
+    )
+    .sort(
+      (a, b) =>
+        new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime()
+    );
 
   return (
     <div className="p-6 max-w-content mx-auto space-y-6">
@@ -173,8 +214,11 @@ function DocumentDetailContent() {
             onSubmit={handleSubmitDocument}
             onEditHeader={() => setIsEditHeaderOpen(true)}
             onCancel={handleCancelDocument}
+            onRecordReceipt={() => setIsRecordReceiptOpen(true)}
+            onComplete={handleCompleteDocument}
             isSubmitting={isSubmitting}
             isCancelling={isCancelling}
+            isCompleting={isCompleting}
           />
 
           {/* Lines Table */}
@@ -187,6 +231,57 @@ function DocumentDetailContent() {
             onLineUpdated={handleLineUpdated}
             onLineDeleted={handleLineDeleted}
           />
+
+          {/* Receipt History (FR-15) */}
+          <div className="space-y-3 pt-4 border-t border-border">
+            <div className="flex items-center gap-2">
+              <History className="h-4 w-4 text-primary" />
+              <h3 className="text-base font-semibold text-primary">Receipt History</h3>
+            </div>
+
+            <div className="overflow-x-auto rounded-card border border-border bg-surface shadow-sm">
+              <table className="w-full text-left text-sm border-collapse">
+                <thead>
+                  <tr className="border-b border-border bg-surface-hover text-xs font-medium uppercase tracking-wider text-muted">
+                    <th className="px-4 py-3">Received At</th>
+                    <th className="px-4 py-3">Product SKU</th>
+                    <th className="px-4 py-3">Product Name</th>
+                    <th className="px-4 py-3 text-right">Received Qty</th>
+                    <th className="px-4 py-3">Note</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {allReceipts.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-6 text-center text-xs text-muted">
+                        No receipts have been recorded for this document yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    allReceipts.map((rcp) => (
+                      <tr key={rcp.id} className="hover:bg-surface-hover/50">
+                        <td className="px-4 py-2.5 text-xs text-secondary whitespace-nowrap">
+                          {new Date(rcp.receivedAt).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-2.5 font-mono text-xs font-semibold text-primary">
+                          {rcp.productSku}
+                        </td>
+                        <td className="px-4 py-2.5 text-xs text-secondary">
+                          {rcp.productName}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-medium text-xs text-status-completed-text">
+                          +{rcp.receivedQty}
+                        </td>
+                        <td className="px-4 py-2.5 text-xs text-muted">
+                          {rcp.note || '—'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
 
           {/* Dialogs */}
           <AddLineDialog
@@ -201,6 +296,13 @@ function DocumentDetailContent() {
             onClose={() => setIsEditHeaderOpen(false)}
             document={document}
             onSuccess={(updated) => setDocument(updated)}
+          />
+
+          <RecordReceiptDialog
+            isOpen={isRecordReceiptOpen}
+            onClose={() => setIsRecordReceiptOpen(false)}
+            document={document}
+            onSuccess={() => loadDocument()}
           />
         </>
       ) : null}

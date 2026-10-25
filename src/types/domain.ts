@@ -113,4 +113,49 @@ export interface ReceivingDocumentPage {
   pagination: Pagination;
 }
 
+export interface ReceiptBatchResult {
+  documentId: string;
+  documentStatus: DocumentStatus;
+  receipts: Receipt[];
+  document: ReceivingDocument;
+}
+
+export interface InventoryItem {
+  productId: string;
+  sku: string;
+  name: string;
+  baseUnit: string;
+  isActive: boolean;
+  onHandQty: number;
+  availableQty: number;
+  lastMovementAt: string | null;
+}
+
+export interface InventoryPage {
+  data: InventoryItem[];
+  pagination: Pagination;
+}
+
+export type TransactionType = 'RECEIPT';
+
+export interface InventoryTransaction {
+  id: string;
+  type: TransactionType;
+  productId: string;
+  sku: string;
+  quantity: number;
+  documentId: string;
+  documentNumber: string;
+  lineId: string;
+  receiptId: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface TransactionPage {
+  data: InventoryTransaction[];
+  pagination: Pagination;
+}
+
+
 
