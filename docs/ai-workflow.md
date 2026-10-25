@@ -188,5 +188,75 @@ User approved all 3 items:
 
 ---
 
+## Phase 4: Product Catalogue API & UI
+
+### User Prompt / Requirements
+- API: List products (paginated, search by SKU or name, active filter), Create product, Update product, Deactivate product.
+- UI: Product table, search bar, right-side slide-over sheet for create and edit, active status badges, actions restricted to Supervisor.
+- Tests: BR-01 case-insensitive uniqueness (409 DUPLICATE_SKU), FR-03 SKU locked after transactions exist (409 SKU_LOCKED), BR-12 deactivated products rejected/deactivation idempotency, 403 on Operator mutations.
+
+### What Was Produced
+- **Validation**:
+  - `src/lib/validation/product.schema.ts`: Zod schemas for `ProductCreate` (uppercase regex format, trim, 1-32 chars), `ProductUpdate` (refine requiring at least 1 field), and `ProductQuery` (q, active boolean, page, pageSize).
+- **Domain & Repository**:
+  - `src/types/domain.ts`: Added `Product`, `ProductPage`, `Pagination`.
+  - `src/server/repositories/product.repository.ts`:
+    - `findProducts`: Filter by search term (`ILIKE` on SKU or name) and active flag, sorted by `sku ASC`, pagination with limit/offset. Computes `hasTransactions` via `EXISTS` subqueries on `receiving_lines` and `inventory_transactions`.
+    - `findProductById` & `findProductBySku`: Case-insensitive SKU lookup (`WHERE upper(sku) = $1`).
+    - `createProduct`, `updateProduct`, `deactivateProduct`: Parameterized SQL mutations.
+- **Service Layer**:
+  - `src/server/services/product.service.ts`:
+    - Role enforcement: Supervisors only for write operations (`requireRole(user, ['SUPERVISOR'])`).
+    - BR-01: Normalized uppercase SKU trimmed; unique check rejects duplicate with 409 `DUPLICATE_SKU`.
+    - FR-03: SKU modification is locked if product has existing lines or transactions, rejecting with 409 `SKU_LOCKED`.
+    - FR-04: Product deactivation is idempotent (returns 200 with current state if already inactive).
+- **REST Route Handlers**:
+  - `app/api/products/route.ts` (`GET /api/products`, `POST /api/products`)
+  - `app/api/products/[productId]/route.ts` (`GET /api/products/{id}`, `PATCH /api/products/{id}`)
+  - `app/api/products/[productId]/deactivate/route.ts` (`POST /api/products/{id}/deactivate`)
+- **Frontend UI Components**:
+  - `components/ui/status-badge.tsx`: Pill badges for ACTIVE (green), INACTIVE (gray), and document statuses.
+  - `components/ui/sheet.tsx`: Slide-over sheet from the right with backdrop, close button, and Escape key dismissal.
+  - `components/ui/toast.tsx`: Toast provider with auto-dismiss after 4 seconds per design tokens.
+  - `components/products/product-sheet.tsx`: Create & edit form with SKU disabled when `hasTransactions` is true, and field-level error messages in red text (`role="alert"`).
+  - `components/products/product-table.tsx`: Clean minimal table matching design tokens (48px rows, uppercase headers, search input, skeleton loading, pagination, edit/deactivate buttons visible only to Supervisors).
+  - `app/(app)/products/page.tsx`: Products page with live data fetching, search, pagination, and toast feedback.
+- **Automated Tests**:
+  - `tests/unit/product-rules.test.ts` (5 tests): Validates SKU regex format, default unit `pcs`, update refinements, and query transforms.
+  - `tests/integration/products.test.ts` (7 tests against real PostgreSQL):
+    - Operator cannot create product (403 FORBIDDEN).
+    - Supervisor creates product with normalized uppercase SKU (201).
+    - BR-01 case-insensitive duplicate SKU rejected with 409 `DUPLICATE_SKU`.
+    - Both Operator and Supervisor can list products with search and pagination (200).
+    - Supervisor updates product name and base unit (200).
+    - FR-03 SKU locked after lines exist: attempting SKU rename returns 409 `SKU_LOCKED`, while name/unit edits succeed.
+    - FR-04 deactivation is idempotent and rejects Operator with 403 `FORBIDDEN`.
+
+### Test Output
+```
+> warehouse-receiving-system@1.0.0 test
+> vitest run
+
+ RUN  v3.2.7 C:/Users/Refangga Lintar/Documents/TCL
+
+ ✓ tests/unit/product-rules.test.ts (5 tests) 10ms
+ ✓ tests/unit/env.test.ts (3 tests) 11ms
+ ✓ tests/unit/health.test.ts (5 tests) 8ms
+ ✓ tests/unit/auth-guard.test.ts (5 tests) 13ms
+ ✓ tests/integration/health.test.ts (5 tests) 82ms
+ ✓ tests/integration/products.test.ts (7 tests) 734ms
+ ✓ tests/integration/auth.test.ts (6 tests) 1281ms
+
+ Test Files  7 passed (7)
+      Tests  36 passed (36)
+   Duration  2.48s
+```
+
+`next lint`: 0 warnings, 0 errors.
+`next build`: Successfully generated `/products` and dynamic routes (`/api/products`, `/api/products/[productId]`, `/api/products/[productId]/deactivate`).
+
+---
+
+
 
 

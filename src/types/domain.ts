@@ -31,3 +31,26 @@ export type DocumentStatus =
   | 'PARTIALLY_RECEIVED'
   | 'COMPLETED'
   | 'CANCELLED';
+
+export interface Pagination {
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface Product {
+  id: string;
+  sku: string;
+  name: string;
+  baseUnit: string;
+  isActive: boolean;
+  hasTransactions: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductPage {
+  data: Product[];
+  pagination: Pagination;
+}
+
