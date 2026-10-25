@@ -513,3 +513,70 @@ User approved all 3 items:
 
 `next lint`: 0 warnings, 0 errors.
 `next build`: Successfully compiled and optimized all static and dynamic routes.
+
+---
+
+## Phase 7B: Supervisor User Management (API & UI)
+
+### User Prompt / Requirements
+- API:
+  - List users (`GET /api/users`): Supervisor only (403 for Operators). Paginated with optional search by username or full name. Exposes `SafeUser` (`id`, `username`, `fullName`, `role`, `isActive`, `createdAt`) with zero secret leakage.
+  - Create user (`POST /api/users`): Supervisor only. Validates username pattern `^[a-z0-9._-]+$`, length 3-50, full name 1-120 chars, role enum, password >= 8 chars. Rejects duplicates with 409 `DUPLICATE_USERNAME`. Writes audit log (`user.create`).
+  - Update user (`PATCH /api/users/{userId}`): Supervisor only. Allows updating `fullName`, `role`, and `isActive`.
+  - Last active supervisor protection rule (Tech Spec 16.3, D-08): Attempting to deactivate (`isActive: false`) or demote (`role: 'OPERATOR'`) the last active supervisor returns 409 `LAST_SUPERVISOR_ACTION_FORBIDDEN`. A supervisor may deactivate or demote their own account when another active supervisor exists. Deactivating a user immediately invalidates their active sessions. Writes audit log (`user.update`).
+- Frontend UI:
+  - `app/(app)/users/page.tsx`: Supervisor-only user management screen (FR-19). Renders access restricted alert card if accessed by an Operator.
+  - Search toolbar, table with 48px rows, username in monospace, role badges, active status pills, created dates.
+  - Quick toggle button for Deactivate / Activate with confirmation.
+  - `components/users/user-sheet.tsx`: Slide-over panel for user creation and editing with field-level `role="alert"` errors and global conflict alerts.
+- Automated Tests:
+  - `tests/unit/user-rules.test.ts`: Validates input schemas, character constraints, password minimums, and partial updates.
+  - `tests/integration/users.test.ts`: Integration tests against real PostgreSQL verifying unauthenticated 401, Operator 403 on all user endpoints, Supervisor user listing, 201 user creation, 409 `DUPLICATE_USERNAME` rejection, 200 update, and enforcement of 409 `LAST_SUPERVISOR_ACTION_FORBIDDEN`.
+
+### What Was Produced
+- **Domain & Validation**:
+  - `src/types/domain.ts`: Added `SafeUser` and `UserPage`.
+  - `src/lib/validation/user.schema.ts`: Zod schemas for `userCreateSchema`, `userUpdateSchema`, and `userQuerySchema`.
+- **Database & Repositories**:
+  - `src/server/repositories/user.repository.ts`: Added `listUsers`, `createUser`, `updateUser`, and `countActiveSupervisors` using parameterized SQL.
+- **Service Layer**:
+  - `src/server/services/user.service.ts`: Implemented `listUsers`, `createUser`, and `updateUser` with role enforcement, duplicate username validation, last active supervisor protection, session revocation on deactivation, and audit logging (`user.create`, `user.update`).
+- **REST Route Handlers**:
+  - `app/api/users/route.ts` (`GET /api/users`, `POST /api/users`)
+  - `app/api/users/[userId]/route.ts` (`PATCH /api/users/[userId]`)
+- **Frontend UI Components & Pages**:
+  - `components/users/user-sheet.tsx`: Slide-over sheet for creating and updating users with role selection, initial password generation, and active toggle.
+  - `app/(app)/users/page.tsx`: Complete user management screen with role restriction guard, search, user table, pagination, and status toggles.
+- **Automated Tests**:
+  - `tests/unit/user-rules.test.ts` (6 tests): Validates creation regex, minimum password length, role enum, and update refine.
+  - `tests/integration/users.test.ts` (7 tests): Complete PostgreSQL integration testing covering 401, 403 on Operator, 200 list, 201 create, 409 duplicate, 200 update, and 409 last supervisor protection.
+
+### Test Output
+```
+> warehouse-receiving-system@1.0.0 test
+> vitest run
+
+ RUN  v3.2.7 C:/Users/Refangga Lintar/Documents/TCL
+
+ ✓ tests/unit/env.test.ts (3 tests) 11ms
+ ✓ tests/unit/user-rules.test.ts (6 tests) 12ms
+ ✓ tests/unit/lifecycle.test.ts (16 tests) 17ms
+ ✓ tests/unit/receipt-rules.test.ts (7 tests) 15ms
+ ✓ tests/unit/auth-guard.test.ts (5 tests) 13ms
+ ✓ tests/integration/health.test.ts (5 tests) 116ms
+ ✓ tests/unit/product-rules.test.ts (5 tests) 10ms
+ ✓ tests/unit/health.test.ts (5 tests) 9ms
+ ✓ tests/integration/products.test.ts (7 tests) 975ms
+ ✓ tests/integration/receiving-documents.test.ts (10 tests) 1161ms
+ ✓ tests/integration/receipts.test.ts (3 tests) 1097ms
+ ✓ tests/integration/auth.test.ts (6 tests) 1593ms
+ ✓ tests/integration/users.test.ts (7 tests) 1617ms
+
+ Test Files  13 passed (13)
+      Tests  85 passed (85)
+   Duration  2.92s
+```
+
+`next lint`: 0 warnings, 0 errors.
+`next build`: Successfully generated production route `/users` and dynamic API handlers `/api/users`, `/api/users/[userId]`.
+

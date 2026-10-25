@@ -18,6 +18,20 @@ export interface CurrentUser {
   role: Role;
 }
 
+export interface SafeUser {
+  id: string;
+  username: string;
+  fullName: string;
+  role: Role;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface UserPage {
+  data: SafeUser[];
+  pagination: Pagination;
+}
+
 export interface Session {
   id: string;
   userId: string;
