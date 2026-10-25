@@ -1,0 +1,1163 @@
+openapi: 3.0.3
+info:
+  title: Warehouse Receiving System API
+  version: 1.0.0
+  description: |
+    REST API for the Warehouse Receiving System. Implemented as Next.js Route Handlers
+    backed by PostgreSQL. All business rules are enforced here; frontend validation is
+    advisory only.
+
+    Conventions
+    - Base path: /api
+    - Authentication: session cookie set by POST /auth/login (httpOnly, SameSite=Lax).
+    - All timestamps are ISO 8601 in UTC.
+    - Quantities are positive or zero integers.
+    - Write requests that create stock movements require an Idempotency-Key header.
+    - Errors use the Error schema with a stable machine-readable code.
+
+servers:
+  - url: http://localhost:3000/api
+    description: Local Docker Compose
+
+tags:
+  - name: Auth
+  - name: Products
+  - name: ReceivingDocuments
+  - name: Receipts
+  - name: Inventory
+  - name: Transactions
+  - name: Users
+  - name: Health
+
+security:
+  - sessionCookie: []
+
+paths:
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in with username and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Logged in. Session cookie is set.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentUser'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/InvalidCredentials' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Log out and invalidate the session
+      responses:
+        '204': { description: Logged out }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get the currently authenticated user
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentUser'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /products:
+    get:
+      tags: [Products]
+      summary: List products (FR-02)
+      description: Available to Operator and Supervisor.
+      parameters:
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: active
+          in: query
+          schema: { type: boolean }
+          description: Filter by active flag. Omit to return all.
+      responses:
+        '200':
+          description: Paginated product list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductPage'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Products]
+      summary: Create a product (FR-01)
+      description: Supervisor only. SKU is unique case-insensitively (BR-01).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductCreate'
+      responses:
+        '201':
+          description: Product created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /products/{productId}:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    get:
+      tags: [Products]
+      summary: Get a product
+      responses:
+        '200':
+          description: Product
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Products]
+      summary: Update a product (FR-03)
+      description: |
+        Supervisor only. SKU may be changed only while the product has no transactions
+        and no receiving lines (BR-01, FR-03).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductUpdate'
+      responses:
+        '200':
+          description: Product updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /products/{productId}/deactivate:
+    post:
+      tags: [Products]
+      summary: Deactivate a product (FR-04)
+      description: |
+        Supervisor only. Deactivated products cannot be added to new lines (BR-12).
+        Existing lines and stock are unaffected (Q-08 default).
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      responses:
+        '200':
+          description: Product deactivated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /receiving-documents:
+    get:
+      tags: [ReceivingDocuments]
+      summary: List receiving documents (FR-14)
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/DocumentStatus'
+        - name: supplier
+          in: query
+          schema: { type: string, maxLength: 150 }
+          description: Case-insensitive partial match on supplier name.
+        - name: dateFrom
+          in: query
+          schema: { type: string, format: date }
+        - name: dateTo
+          in: query
+          schema: { type: string, format: date }
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated receiving document list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingDocumentPage'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [ReceivingDocuments]
+      summary: Create a receiving document in DRAFT (FR-05)
+      description: Operator and Supervisor. Document number is generated by the system (BR-15).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReceivingDocumentCreate'
+      responses:
+        '201':
+          description: Document created in DRAFT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingDocument'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /receiving-documents/{documentId}:
+    parameters:
+      - $ref: '#/components/parameters/DocumentId'
+    get:
+      tags: [ReceivingDocuments]
+      summary: Get document detail with lines and receipt history (FR-15)
+      responses:
+        '200':
+          description: Document detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingDocumentDetail'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [ReceivingDocuments]
+      summary: Update document header
+      description: |
+        Allowed only in DRAFT for Operator and Supervisor. In OPEN or PARTIALLY_RECEIVED
+        only the notes field may be changed by a Supervisor. COMPLETED and CANCELLED are read-only (BR-08).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReceivingDocumentUpdate'
+      responses:
+        '200':
+          description: Document updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingDocument'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+
+  /receiving-documents/{documentId}/lines:
+    parameters:
+      - $ref: '#/components/parameters/DocumentId'
+    post:
+      tags: [ReceivingDocuments]
+      summary: Add a line to a DRAFT document (FR-06)
+      description: |
+        Operator and Supervisor. Product must be active (BR-12). A product may appear only once
+        per document (BR-11).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LineCreate'
+      responses:
+        '201':
+          description: Line added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingLine'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+        '422': { $ref: '#/components/responses/BusinessRuleViolation' }
+
+  /receiving-documents/{documentId}/lines/{lineId}:
+    parameters:
+      - $ref: '#/components/parameters/DocumentId'
+      - $ref: '#/components/parameters/LineId'
+    patch:
+      tags: [ReceivingDocuments]
+      summary: Change expected quantity of a line
+      description: |
+        DRAFT: Operator and Supervisor may change expectedQty to any integer of at least 1.
+        OPEN or PARTIALLY_RECEIVED: Supervisor only, and expectedQty may be increased, or decreased
+        only down to receivedQty (FR-09, A-06). Other states are read-only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LineUpdate'
+      responses:
+        '200':
+          description: Line updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingLine'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+        '422': { $ref: '#/components/responses/BusinessRuleViolation' }
+    delete:
+      tags: [ReceivingDocuments]
+      summary: Remove a line from a DRAFT document (FR-07)
+      description: Operator and Supervisor. Allowed only in DRAFT and only if the line has no receipts.
+      responses:
+        '204': { description: Line removed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+
+  /receiving-documents/{documentId}/submit:
+    post:
+      tags: [ReceivingDocuments]
+      summary: Submit a DRAFT document to OPEN (FR-08)
+      description: Operator and Supervisor. Requires at least one line (US-04).
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+      responses:
+        '200':
+          description: Document is OPEN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingDocument'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+        '422': { $ref: '#/components/responses/BusinessRuleViolation' }
+
+  /receiving-documents/{documentId}/complete:
+    post:
+      tags: [ReceivingDocuments]
+      summary: Complete a document (FR-12)
+      description: |
+        Supervisor only. Allowed from OPEN or PARTIALLY_RECEIVED and only when every line has
+        receivedQty equal to expectedQty (BR-06).
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+      responses:
+        '200':
+          description: Document is COMPLETED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingDocument'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+        '422': { $ref: '#/components/responses/BusinessRuleViolation' }
+
+  /receiving-documents/{documentId}/cancel:
+    post:
+      tags: [ReceivingDocuments]
+      summary: Cancel a document (FR-13)
+      description: |
+        Supervisor only. Allowed from DRAFT, OPEN, or PARTIALLY_RECEIVED only when no receipts
+        exist (BR-07). Cancelled documents are read-only.
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+      responses:
+        '200':
+          description: Document is CANCELLED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivingDocument'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+
+  /receiving-documents/{documentId}/receipts:
+    parameters:
+      - $ref: '#/components/parameters/DocumentId'
+    post:
+      tags: [Receipts]
+      summary: Record one or more receipts atomically (FR-10, FR-11)
+      description: |
+        Operator and Supervisor. Document must be OPEN or PARTIALLY_RECEIVED (BR-05).
+        All items are validated and committed in one database transaction. If any item fails,
+        nothing is saved (US-06). Lines are locked during commit so concurrent receipts cannot
+        exceed expectedQty (BR-03, NFR-02).
+
+        Idempotency: the same Idempotency-Key with the same body returns the original response
+        with HTTP 200 and creates no new transaction (BR-10, US-07). The same key with a
+        different body returns 409 IDEMPOTENCY_KEY_REUSED.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Client-generated unique key, for example a UUID v4. Max 64 characters.
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReceiptBatchCreate'
+      responses:
+        '201':
+          description: Receipts recorded. Document status is returned after the update.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiptBatchResult'
+        '200':
+          description: Replayed response for a previously processed Idempotency-Key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiptBatchResult'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Invalid document state, or Idempotency-Key reused with a different body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: A receipt exceeds the remaining quantity or breaks another business rule
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /inventory:
+    get:
+      tags: [Inventory]
+      summary: List on-hand inventory per product (FR-16)
+      description: Products with zero stock are included.
+      parameters:
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated inventory
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryPage'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /transactions:
+    get:
+      tags: [Transactions]
+      summary: List inventory transaction history (FR-17)
+      description: Newest first. Append-only (BR-13).
+      parameters:
+        - name: productId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: documentId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: type
+          in: query
+          schema:
+            $ref: '#/components/schemas/TransactionType'
+        - name: dateFrom
+          in: query
+          schema: { type: string, format: date-time }
+        - name: dateTo
+          in: query
+          schema: { type: string, format: date-time }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated transactions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionPage'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /users:
+    get:
+      tags: [Users]
+      summary: List users (FR-19)
+      description: Supervisor only.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated users
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPage'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Users]
+      summary: Create a user (FR-19)
+      description: Supervisor only. No self-registration (A-09).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /users/{userId}:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [Users]
+      summary: Update a user's role, name, or active flag (FR-19)
+      description: |
+        Supervisor only. A Supervisor may not deactivate or demote their account if they are the
+        last active Supervisor (LAST_SUPERVISOR_ACTION_FORBIDDEN).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+
+  /health/live:
+    get:
+      tags: [Health]
+      summary: Liveness probe (FR-20)
+      description: Returns 200 if the process is running. No dependency checks.
+      security: []
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Readiness probe (FR-20, NFR-06)
+      description: |
+        Returns 200 only when the database is reachable and no migrations are pending.
+        Returns 503 otherwise.
+      security: []
+      responses:
+        '200':
+          description: Ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          description: Not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+components:
+
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+
+  parameters:
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    DocumentId:
+      name: documentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    LineId:
+      name: lineId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Search:
+      name: q
+      in: query
+      schema: { type: string, maxLength: 100 }
+      description: Search text. Products match SKU or name. Documents match document number or reference.
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  schemas:
+
+    # ---------- Common ----------
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable error code.
+          enum:
+            - VALIDATION_ERROR
+            - UNAUTHENTICATED
+            - INVALID_CREDENTIALS
+            - FORBIDDEN
+            - NOT_FOUND
+            - DUPLICATE_SKU
+            - DUPLICATE_USERNAME
+            - DUPLICATE_PRODUCT_ON_DOCUMENT
+            - DUPLICATE_REFERENCE
+            - PRODUCT_INACTIVE
+            - INVALID_DOCUMENT_STATE
+            - LINE_NOT_EDITABLE
+            - OVER_RECEIPT
+            - DOCUMENT_NOT_FULLY_RECEIVED
+            - DOCUMENT_HAS_RECEIPTS
+            - NO_LINES
+            - SKU_LOCKED
+            - IDEMPOTENCY_KEY_REUSED
+            - LAST_SUPERVISOR_ACTION_FORBIDDEN
+            - INTERNAL_ERROR
+        message:
+          type: string
+          description: Human-readable message in English.
+        field:
+          type: string
+          nullable: true
+          description: Field name for field-level validation errors.
+        details:
+          type: array
+          description: Optional list of per-item issues, for example per receipt line.
+          items:
+            type: object
+            properties:
+              lineId: { type: string, format: uuid }
+              requested: { type: integer }
+              remaining: { type: integer }
+              code: { type: string }
+              message: { type: string }
+
+    Pagination:
+      type: object
+      required: [page, pageSize, total]
+      properties:
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer }
+
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, error]
+        database:
+          type: string
+          enum: [up, down]
+        migrations:
+          type: string
+          enum: [up_to_date, pending]
+
+    # ---------- Auth ----------
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 3, maxLength: 50 }
+        password: { type: string, minLength: 8, maxLength: 128, format: password }
+
+    Role:
+      type: string
+      enum: [OPERATOR, SUPERVISOR]
+
+    CurrentUser:
+      type: object
+      required: [id, username, fullName, role]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        fullName: { type: string }
+        role: { $ref: '#/components/schemas/Role' }
+
+    # ---------- Users ----------
+    User:
+      type: object
+      required: [id, username, fullName, role, isActive, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        fullName: { type: string }
+        role: { $ref: '#/components/schemas/Role' }
+        isActive: { type: boolean }
+        createdAt: { type: string, format: date-time }
+
+    UserCreate:
+      type: object
+      required: [username, fullName, role, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 50
+          pattern: '^[a-z0-9._-]+$'
+        fullName: { type: string, minLength: 1, maxLength: 120 }
+        role: { $ref: '#/components/schemas/Role' }
+        password: { type: string, minLength: 8, maxLength: 128, format: password }
+
+    UserUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        fullName: { type: string, minLength: 1, maxLength: 120 }
+        role: { $ref: '#/components/schemas/Role' }
+        isActive: { type: boolean }
+
+    UserPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/User' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    # ---------- Products ----------
+    Product:
+      type: object
+      required: [id, sku, name, baseUnit, isActive, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        sku:
+          type: string
+          description: Stored in upper case.
+          example: 'SKU-0001'
+        name: { type: string }
+        baseUnit: { type: string, example: 'pcs' }
+        isActive: { type: boolean }
+        hasTransactions:
+          type: boolean
+          description: True when the product has any stock transaction or receiving line. Controls SKU editability.
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ProductCreate:
+      type: object
+      required: [sku, name]
+      properties:
+        sku:
+          type: string
+          minLength: 1
+          maxLength: 32
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+          description: Trimmed and stored in upper case. Unique across all products (BR-01).
+        name: { type: string, minLength: 1, maxLength: 150 }
+        baseUnit: { type: string, minLength: 1, maxLength: 20, default: 'pcs' }
+
+    ProductUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        sku:
+          type: string
+          minLength: 1
+          maxLength: 32
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+        name: { type: string, minLength: 1, maxLength: 150 }
+        baseUnit: { type: string, minLength: 1, maxLength: 20 }
+
+    ProductPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Product' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    # ---------- Receiving documents ----------
+    DocumentStatus:
+      type: string
+      enum: [DRAFT, OPEN, PARTIALLY_RECEIVED, COMPLETED, CANCELLED]
+
+    ReceivingDocumentCreate:
+      type: object
+      required: [supplierName]
+      properties:
+        supplierName: { type: string, minLength: 1, maxLength: 150 }
+        referenceNumber:
+          type: string
+          maxLength: 60
+          nullable: true
+          description: Optional. Unique per supplier when provided (BR-14).
+        expectedArrivalDate:
+          type: string
+          format: date
+          nullable: true
+        notes:
+          type: string
+          maxLength: 1000
+          nullable: true
+
+    ReceivingDocumentUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        supplierName: { type: string, minLength: 1, maxLength: 150 }
+        referenceNumber: { type: string, maxLength: 60, nullable: true }
+        expectedArrivalDate: { type: string, format: date, nullable: true }
+        notes: { type: string, maxLength: 1000, nullable: true }
+
+    ReceivingDocument:
+      type: object
+      required: [id, documentNumber, status, supplierName, createdBy, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        documentNumber:
+          type: string
+          pattern: '^RD-[0-9]{4}-[0-9]{6}$'
+          example: 'RD-2026-000001'
+        status: { $ref: '#/components/schemas/DocumentStatus' }
+        supplierName: { type: string }
+        referenceNumber: { type: string, nullable: true }
+        expectedArrivalDate: { type: string, format: date, nullable: true }
+        notes: { type: string, nullable: true }
+        totals:
+          type: object
+          description: Summary of all lines.
+          properties:
+            lineCount: { type: integer }
+            expectedQty: { type: integer }
+            receivedQty: { type: integer }
+            remainingQty: { type: integer }
+        createdBy: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        submittedAt: { type: string, format: date-time, nullable: true }
+        completedAt: { type: string, format: date-time, nullable: true }
+        cancelledAt: { type: string, format: date-time, nullable: true }
+
+    ReceivingDocumentPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ReceivingDocument' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    ReceivingDocumentDetail:
+      allOf:
+        - $ref: '#/components/schemas/ReceivingDocument'
+        - type: object
+          required: [lines]
+          properties:
+            lines:
+              type: array
+              items: { $ref: '#/components/schemas/ReceivingLine' }
+
+    LineCreate:
+      type: object
+      required: [productId, expectedQty]
+      properties:
+        productId: { type: string, format: uuid }
+        expectedQty: { type: integer, minimum: 1, maximum: 1000000 }
+
+    LineUpdate:
+      type: object
+      required: [expectedQty]
+      properties:
+        expectedQty: { type: integer, minimum: 1, maximum: 1000000 }
+
+    ReceivingLine:
+      type: object
+      required: [id, documentId, product, expectedQty, receivedQty, remainingQty, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        documentId: { type: string, format: uuid }
+        product:
+          type: object
+          required: [id, sku, name]
+          properties:
+            id: { type: string, format: uuid }
+            sku: { type: string }
+            name: { type: string }
+        expectedQty: { type: integer }
+        receivedQty: { type: integer, minimum: 0 }
+        remainingQty: { type: integer, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+        receipts:
+          type: array
+          description: Included on the document detail endpoint only.
+          items: { $ref: '#/components/schemas/Receipt' }
+
+    # ---------- Receipts ----------
+    ReceiptItem:
+      type: object
+      required: [lineId, receivedQty]
+      properties:
+        lineId: { type: string, format: uuid }
+        receivedQty:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        note:
+          type: string
+          maxLength: 255
+          nullable: true
+
+    ReceiptBatchCreate:
+      type: object
+      required: [receivedAt, items]
+      properties:
+        receivedAt:
+          type: string
+          format: date-time
+          description: When the goods were physically received, in UTC. Must not be in the future by more than 5 minutes.
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: List of line receipts. lineId must be unique within the batch.
+          items: { $ref: '#/components/schemas/ReceiptItem' }
+
+    Receipt:
+      type: object
+      required: [id, lineId, receivedQty, receivedAt, recordedBy, recordedAt]
+      properties:
+        id: { type: string, format: uuid }
+        lineId: { type: string, format: uuid }
+        receivedQty: { type: integer }
+        note: { type: string, nullable: true }
+        receivedAt: { type: string, format: date-time }
+        recordedBy: { type: string, format: uuid }
+        recordedAt: { type: string, format: date-time }
+
+    ReceiptBatchResult:
+      type: object
+      required: [documentId, documentStatus, receipts, document]
+      properties:
+        documentId: { type: string, format: uuid }
+        documentStatus: { $ref: '#/components/schemas/DocumentStatus' }
+        receipts:
+          type: array
+          items: { $ref: '#/components/schemas/Receipt' }
+        document:
+          $ref: '#/components/schemas/ReceivingDocument'
+
+    # ---------- Inventory and transactions ----------
+    InventoryItem:
+      type: object
+      required: [productId, sku, name, onHandQty, availableQty, lastMovementAt]
+      properties:
+        productId: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        baseUnit: { type: string }
+        isActive: { type: boolean }
+        onHandQty:
+          type: integer
+          minimum: 0
+          description: Sum of RECEIPT transactions for the product (NFR-01).
+        availableQty:
+          type: integer
+          minimum: 0
+          description: Equals onHandQty in v1 because no outbound flow exists (A-05).
+        lastMovementAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    InventoryPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/InventoryItem' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    TransactionType:
+      type: string
+      enum: [RECEIPT]
+
+    InventoryTransaction:
+      type: object
+      required: [id, type, productId, sku, quantity, documentId, documentNumber, lineId, receiptId, createdBy, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        type: { $ref: '#/components/schemas/TransactionType' }
+        productId: { type: string, format: uuid }
+        sku: { type: string }
+        quantity:
+          type: integer
+          description: Positive for RECEIPT.
+        documentId: { type: string, format: uuid }
+        documentNumber: { type: string }
+        lineId: { type: string, format: uuid }
+        receiptId: { type: string, format: uuid }
+        createdBy: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+
+    TransactionPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/InventoryTransaction' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+  responses:
+    ValidationError:
+      description: Request body or query parameter failed validation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: VALIDATION_ERROR
+            message: 'expectedQty must be an integer of at least 1.'
+            field: expectedQty
+    Unauthorized:
+      description: Missing or expired session
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: UNAUTHENTICATED
+            message: 'Authentication required.'
+    InvalidCredentials:
+      description: Username or password is incorrect
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: INVALID_CREDENTIALS
+            message: 'Username or password is incorrect.'
+    Forbidden:
+      description: The authenticated role is not allowed to perform this action
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: FORBIDDEN
+            message: 'Only supervisors can perform this action.'
+    NotFound:
+      description: Resource does not exist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: NOT_FOUND
+            message: 'Receiving document not found.'
+    Conflict:
+      description: Unique constraint violated, for example a duplicate SKU
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: DUPLICATE_SKU
+            message: 'A product with this SKU already exists.'
+            field: sku
+    InvalidState:
+      description: The resource is not in a state that allows this operation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: INVALID_DOCUMENT_STATE
+            message: 'Document is COMPLETED and cannot be changed.'
+    BusinessRuleViolation:
+      description: The request is well formed but breaks a business rule
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: OVER_RECEIPT
+            message: 'Received quantity exceeds the remaining quantity for this line.'
+            details:
+              - lineId: 3f1c2a4e-8b7d-4c2e-9a10-5d6e7f8a9b0c
+                requested: 7
+                remaining: 6
+                code: OVER_RECEIPT
+                message: 'Requested 7, remaining 6.'

@@ -1,0 +1,130 @@
+%% Warehouse Receiving System - ERD
+%% Source of truth for column-level detail: docs/technical-spec.md section 3.
+%% PK = primary key, FK = foreign key, UK = unique key.
+%% Append-only tables (receipts, inventory_transactions, audit_logs) are guarded by triggers.
+
+erDiagram
+
+    users {
+        uuid id PK
+        varchar username UK "lowercase, 3-50 chars"
+        varchar full_name
+        varchar role "OPERATOR or SUPERVISOR"
+        text password_hash "bcrypt"
+        boolean is_active
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    sessions {
+        varchar id PK "sha256 of cookie token"
+        uuid user_id FK
+        timestamptz created_at
+        timestamptz expires_at
+    }
+
+    products {
+        uuid id PK
+        varchar sku UK "upper case, 1-32 chars"
+        varchar name
+        varchar base_unit "default pcs"
+        boolean is_active
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    receiving_documents {
+        uuid id PK
+        varchar document_number UK "RD-YYYY-NNNNNN"
+        varchar status "DRAFT OPEN PARTIALLY_RECEIVED COMPLETED CANCELLED"
+        varchar supplier_name
+        varchar supplier_key "lower and trimmed supplier name"
+        varchar reference_number "unique per supplier_key when present"
+        date expected_arrival_date
+        varchar notes
+        uuid created_by FK
+        timestamptz submitted_at
+        timestamptz completed_at
+        timestamptz cancelled_at
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    document_number_counters {
+        integer year PK
+        integer last_value
+    }
+
+    receiving_lines {
+        uuid id PK
+        uuid document_id FK,UK "UK with product_id"
+        uuid product_id FK,UK "UK with document_id"
+        integer expected_qty "1 to 1000000"
+        integer received_qty "0 to expected_qty"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    receipts {
+        uuid id PK
+        uuid batch_id "groups one request"
+        uuid document_id FK
+        uuid line_id FK
+        integer received_qty "at least 1"
+        varchar note
+        timestamptz received_at
+        uuid recorded_by FK
+        timestamptz recorded_at
+    }
+
+    inventory_transactions {
+        uuid id PK
+        varchar type "RECEIPT"
+        uuid product_id FK
+        integer quantity "positive for RECEIPT"
+        uuid document_id FK
+        uuid line_id FK
+        uuid receipt_id FK,UK "UK, required for RECEIPT"
+        uuid created_by FK
+        timestamptz created_at
+    }
+
+    idempotency_keys {
+        uuid user_id PK,FK
+        varchar key PK "max 64 chars"
+        char request_hash "sha256 of canonical body"
+        integer response_status
+        jsonb response_body
+        timestamptz created_at
+    }
+
+    audit_logs {
+        bigint id PK
+        varchar request_id
+        uuid actor_id FK "nullable"
+        varchar action "for example receipt.record"
+        varchar entity_type
+        uuid entity_id
+        jsonb before_data
+        jsonb after_data
+        timestamptz created_at
+    }
+
+    users ||--o{ sessions : "holds"
+    users ||--o{ receiving_documents : "creates"
+    users ||--o{ receipts : "records"
+    users ||--o{ inventory_transactions : "creates"
+    users ||--o{ idempotency_keys : "owns"
+    users |o--o{ audit_logs : "performs"
+
+    receiving_documents ||--|{ receiving_lines : "contains"
+    receiving_documents ||--o{ receipts : "receives"
+    receiving_documents ||--o{ inventory_transactions : "moves stock for"
+
+    products ||--o{ receiving_lines : "is listed on"
+    products ||--o{ inventory_transactions : "changes stock of"
+
+    receiving_lines ||--o{ receipts : "is received by"
+    receiving_lines ||--o{ inventory_transactions : "is the source of"
+
+    receipts ||--|| inventory_transactions : "produces one"
