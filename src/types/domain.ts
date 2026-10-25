@@ -54,3 +54,63 @@ export interface ProductPage {
   pagination: Pagination;
 }
 
+export interface ReceivingDocumentTotals {
+  lineCount: number;
+  expectedQty: number;
+  receivedQty: number;
+  remainingQty: number;
+}
+
+export interface Receipt {
+  id: string;
+  lineId: string;
+  receivedQty: number;
+  note: string | null;
+  receivedAt: string;
+  recordedBy: string;
+  recordedAt: string;
+}
+
+export interface ReceivingLine {
+  id: string;
+  documentId: string;
+  product: {
+    id: string;
+    sku: string;
+    name: string;
+  };
+  expectedQty: number;
+  receivedQty: number;
+  remainingQty: number;
+  createdAt: string;
+  receipts?: Receipt[];
+}
+
+export interface ReceivingDocument {
+  id: string;
+  documentNumber: string;
+  status: DocumentStatus;
+  supplierName: string;
+  referenceNumber: string | null;
+  expectedArrivalDate: string | null;
+  notes: string | null;
+  totals?: ReceivingDocumentTotals;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  submittedAt: string | null;
+  completedAt: string | null;
+  cancelledAt: string | null;
+}
+
+export interface ReceivingDocumentDetail extends ReceivingDocument {
+  lines: ReceivingLine[];
+  totals: ReceivingDocumentTotals;
+}
+
+export interface ReceivingDocumentPage {
+  data: ReceivingDocument[];
+  pagination: Pagination;
+}
+
+

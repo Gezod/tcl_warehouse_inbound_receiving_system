@@ -50,6 +50,13 @@ describe('Products API Integration Tests (against PostgreSQL)', () => {
     supervisorCookie = supLoginRes.headers.get('set-cookie')!.split(';')[0];
   });
 
+  const runId = Math.random().toString(36).substring(2, 7).toUpperCase();
+  const testSku1 = `SKU-ABC-${runId}`;
+  const testSkuLock = `SKU-LOCK-${runId}`;
+  const testSkuLockRenamed = `SKU-REN-${runId}`;
+  const testSkuLockAttempt = `SKU-ATT-${runId}`;
+  const testSkuDeact = `SKU-DCT-${runId}`;
+
   afterAll(async () => {
     await closePool();
   });
@@ -58,7 +65,7 @@ describe('Products API Integration Tests (against PostgreSQL)', () => {
     const req = new NextRequest('http://localhost:3000/api/products', {
       method: 'POST',
       body: JSON.stringify({
-        sku: 'OP-PROD-01',
+        sku: `OP-PROD-${runId}`,
         name: 'Operator Product',
         baseUnit: 'pcs',
       }),
@@ -78,7 +85,7 @@ describe('Products API Integration Tests (against PostgreSQL)', () => {
     const req = new NextRequest('http://localhost:3000/api/products', {
       method: 'POST',
       body: JSON.stringify({
-        sku: '  sku-abc-001  ', // lower case with whitespace
+        sku: `  ${testSku1.toLowerCase()}  `, // lower case with whitespace
         name: 'Industrial Widget A',
         baseUnit: 'box',
       }),
@@ -93,7 +100,7 @@ describe('Products API Integration Tests (against PostgreSQL)', () => {
     const data = await res.json();
 
     expect(data.id).toBeDefined();
-    expect(data.sku).toBe('SKU-ABC-001'); // Normalized upper case
+    expect(data.sku).toBe(testSku1); // Normalized upper case
     expect(data.name).toBe('Industrial Widget A');
     expect(data.baseUnit).toBe('box');
     expect(data.isActive).toBe(true);
@@ -101,11 +108,11 @@ describe('Products API Integration Tests (against PostgreSQL)', () => {
   });
 
   it('BR-01: Rejects duplicate SKU case-insensitively with 409 DUPLICATE_SKU', async () => {
-    // Attempt to create "sku-abc-001" which matches existing "SKU-ABC-001"
+    // Attempt to create lower case variant which matches existing SKU
     const req = new NextRequest('http://localhost:3000/api/products', {
       method: 'POST',
       body: JSON.stringify({
-        sku: 'sku-abc-001',
+        sku: testSku1.toLowerCase(),
         name: 'Duplicate Widget',
         baseUnit: 'pcs',
       }),
@@ -134,7 +141,8 @@ describe('Products API Integration Tests (against PostgreSQL)', () => {
     expect(opData.data).toBeInstanceOf(Array);
     expect(opData.data.length).toBeGreaterThanOrEqual(1);
     expect(opData.pagination.total).toBeGreaterThanOrEqual(1);
-    expect(opData.data[0].sku).toBe('SKU-ABC-001');
+    const foundProduct = opData.data.find((p: any) => p.sku === testSku1);
+    expect(foundProduct).toBeDefined();
 
     // Supervisor listing
     const supReq = new NextRequest('http://localhost:3000/api/products', {
@@ -146,12 +154,13 @@ describe('Products API Integration Tests (against PostgreSQL)', () => {
 
   it('Supervisor updates product name and baseUnit (200)', async () => {
     // First fetch product id
-    const listReq = new NextRequest('http://localhost:3000/api/products?q=SKU-ABC-001', {
+    const listReq = new NextRequest(`http://localhost:3000/api/products?q=${testSku1}`, {
       headers: { cookie: supervisorCookie },
     });
     const listRes = await getProductsRoute(listReq);
     const listData = await listRes.json();
-    const product = listData.data[0];
+    const product = listData.data.find((p: any) => p.sku === testSku1);
+    expect(product).toBeDefined();
 
     // Update name
     const updateReq = new NextRequest(`http://localhost:3000/api/products/${product.id}`, {
@@ -180,7 +189,7 @@ describe('Products API Integration Tests (against PostgreSQL)', () => {
     const createReq = new NextRequest('http://localhost:3000/api/products', {
       method: 'POST',
       body: JSON.stringify({
-        sku: 'SKU-LOCK-TEST',
+        sku: testSkuLock,
         name: 'Lock Test Item',
         baseUnit: 'pcs',
       }),
@@ -197,7 +206,7 @@ describe('Products API Integration Tests (against PostgreSQL)', () => {
     const preLockUpdate = await updateProductRoute(
       new NextRequest(`http://localhost:3000/api/products/${testProduct.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ sku: 'SKU-LOCK-RENAMED' }),
+        body: JSON.stringify({ sku: testSkuLockRenamed }),
         headers: { 'Content-Type': 'application/json', cookie: supervisorCookie },
       }),
       { params: { productId: testProduct.id } }
@@ -208,11 +217,12 @@ describe('Products API Integration Tests (against PostgreSQL)', () => {
     const userRes = await pool.query("SELECT id FROM users WHERE username = 'supervisor' LIMIT 1");
     const supervisorId = userRes.rows[0].id;
 
+    const randomDocNum = `RD-2026-${Math.floor(100000 + Math.random() * 900000)}`;
     const docRes = await pool.query(
       `INSERT INTO receiving_documents (document_number, status, supplier_name, supplier_key, created_by)
-       VALUES ('RD-2026-999991', 'DRAFT', 'Test Supplier', 'test supplier', $1)
+       VALUES ($1, 'DRAFT', 'Test Supplier', 'test supplier', $2)
        RETURNING id;`,
-      [supervisorId]
+      [randomDocNum, supervisorId]
     );
     const docId = docRes.rows[0].id;
 
@@ -233,7 +243,7 @@ describe('Products API Integration Tests (against PostgreSQL)', () => {
     // 4. Attempt to change SKU now -> must be rejected with 409 SKU_LOCKED
     const lockedUpdateReq = new NextRequest(`http://localhost:3000/api/products/${testProduct.id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ sku: 'SKU-LOCK-ATTEMPT-2' }),
+      body: JSON.stringify({ sku: testSkuLockAttempt }),
       headers: {
         'Content-Type': 'application/json',
         cookie: supervisorCookie,
@@ -266,7 +276,7 @@ describe('Products API Integration Tests (against PostgreSQL)', () => {
     const createReq = new NextRequest('http://localhost:3000/api/products', {
       method: 'POST',
       body: JSON.stringify({
-        sku: 'SKU-DEACT-01',
+        sku: testSkuDeact,
         name: 'Deactivatable Product',
         baseUnit: 'pcs',
       }),
@@ -276,6 +286,7 @@ describe('Products API Integration Tests (against PostgreSQL)', () => {
       },
     });
     const createRes = await createProductRoute(createReq);
+    expect(createRes.status).toBe(201);
     const product = await createRes.json();
 
     // 2. Operator attempting deactivation gets 403 FORBIDDEN

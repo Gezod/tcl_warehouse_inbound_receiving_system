@@ -257,6 +257,103 @@ User approved all 3 items:
 
 ---
 
+## Phase 5: Receiving Documents and Lines (API, Lifecycle & UI)
+
+### User Prompt / Requirements
+- Receiving documents and lines domain:
+  - Document header with system-generated sequential number `RD-YYYY-NNNNNN` (BR-15, D-05).
+  - Lifecycle state machine: `DRAFT -> OPEN -> PARTIALLY_RECEIVED -> COMPLETED` and cancellation `DRAFT -> CANCELLED`, `OPEN -> CANCELLED` (BR-01, Section 7).
+  - Business rules:
+    - Empty supplier rejected with 400 `VALIDATION_ERROR` (US-02).
+    - Unique reference per supplier (BR-14).
+    - Positive expected quantities >= 1 (BR-02).
+    - Inactive products rejected with 422 `PRODUCT_INACTIVE` (BR-12, US-03).
+    - Duplicate product on same document rejected with 409 `DUPLICATE_PRODUCT_ON_DOCUMENT` (BR-11, US-03).
+    - Submission requires at least one line (422 `NO_LINES`, US-04).
+    - Role restrictions: DRAFT lines editable by Operator & Supervisor; post-submit line modifications restricted to Supervisor with expectedQty >= receivedQty (FR-09, A-06). Post-submit header modifications restricted to Supervisor notes only (BR-09).
+    - Cancellation restricted to Supervisor when document has zero receipts (FR-13, BR-07).
+    - Terminal states `COMPLETED` and `CANCELLED` reject all edits (BR-08).
+- Endpoints:
+  - `GET /api/receiving-documents`, `POST /api/receiving-documents`
+  - `GET /api/receiving-documents/{id}`, `PATCH /api/receiving-documents/{id}`
+  - `POST /api/receiving-documents/{id}/cancel`
+  - `POST /api/receiving-documents/{id}/lines`
+  - `PATCH /api/receiving-documents/{id}/lines/{lineId}`, `DELETE /api/receiving-documents/{id}/lines/{lineId}`
+  - `POST /api/receiving-documents/{id}/submit`
+- Frontend UI:
+  - Receiving documents list page with search, status filter, and pagination (`app/(app)/receiving-documents/page.tsx`). Strikethrough document numbers for cancelled documents.
+  - New document creation form (`app/(app)/receiving-documents/new/page.tsx`).
+  - Document detail page (`app/(app)/receiving-documents/[id]/page.tsx`) with `DocumentHeaderCard`, `LinesTable`, `AddLineDialog`, `EditHeaderDialog`.
+- Automated Tests:
+  - `tests/unit/lifecycle.test.ts`: pure domain state transition validation and schema tests.
+  - `tests/integration/receiving-documents.test.ts`: integration tests against PostgreSQL verifying full lifecycle and business rules.
+
+### What Was Produced
+- **Domain & Validation**:
+  - `src/types/domain.ts`: Added `ReceivingDocument`, `ReceivingLine`, `Receipt`, `ReceivingDocumentTotals`, `ReceivingDocumentDetail`, `ReceivingDocumentPage`.
+  - `src/server/domain/lifecycle.ts`: Pure lifecycle transition validator mapping PRD Section 7 transition matrix.
+  - `src/lib/validation/receiving-document.schema.ts`: Zod schemas for create, update, line create, line update, and query parsing with `.trim()` before `.min(1)`.
+- **Database & Repositories**:
+  - `src/server/db/tx.ts`: Reusable `withTransaction` helper managing PostgreSQL client checkout, `BEGIN`, `COMMIT`, and `ROLLBACK`.
+  - `src/server/repositories/document-counter.repository.ts`: Atomic transactional sequential counter generation for `RD-YYYY-NNNNNN` with row locking (`FOR UPDATE`).
+  - `src/server/repositories/receiving-document.repository.ts`: List filtering with totals aggregation, detail lookup with lines and receipts, duplicate reference check, and status update.
+  - `src/server/repositories/receiving-line.repository.ts`: Product check on document, line counting, line creation, quantity update, and line deletion.
+- **Service Layer**:
+  - `src/server/services/receiving-document.service.ts`: Complete business logic implementation for creating, listing, updating header/lines, submitting, and cancelling receiving documents with role checking.
+- **Route Handlers**:
+  - `app/api/receiving-documents/route.ts` (`GET`, `POST`)
+  - `app/api/receiving-documents/[documentId]/route.ts` (`GET`, `PATCH`)
+  - `app/api/receiving-documents/[documentId]/cancel/route.ts` (`POST`)
+  - `app/api/receiving-documents/[documentId]/lines/route.ts` (`POST`)
+  - `app/api/receiving-documents/[documentId]/lines/[lineId]/route.ts` (`PATCH`, `DELETE`)
+  - `app/api/receiving-documents/[documentId]/submit/route.ts` (`POST`)
+- **Frontend UI Components & Pages**:
+  - `components/receiving/document-header-card.tsx`: Status badge, RD number (with strikethrough if cancelled), supplier details, reference, dates, totals grid, action buttons (Submit, Edit Header, Cancel).
+  - `components/receiving/lines-table.tsx`: Clean tabular view with SKU, name, expected, received, and remaining quantities; quick inline update modal and line deletion.
+  - `components/receiving/add-line-dialog.tsx`: Modal selecting active products and specifying expected quantities.
+  - `components/receiving/edit-header-dialog.tsx`: Modal for editing supplier/ref/date/notes in DRAFT or notes only in OPEN/PARTIALLY_RECEIVED.
+  - `app/(app)/receiving-documents/page.tsx`: List table with search, status filter, and pagination.
+  - `app/(app)/receiving-documents/new/page.tsx`: Inbound delivery registration form.
+  - `app/(app)/receiving-documents/[id]/page.tsx`: Integrated detail page with interactive lifecycle controls.
+- **Automated Tests**:
+  - `tests/unit/lifecycle.test.ts` (16 tests): Validates PRD Section 7 transition matrix, terminal states, and input validation schemas.
+  - `tests/integration/receiving-documents.test.ts` (10 tests):
+    - Empty supplier rejected (400 VALIDATION_ERROR).
+    - Sequential RD numbering format `RD-YYYY-NNNNNN` in DRAFT (201).
+    - Duplicate reference for same supplier rejected with 409 DUPLICATE_REFERENCE.
+    - Adding active product line (201).
+    - Duplicate product on document rejected with 409 DUPLICATE_PRODUCT_ON_DOCUMENT.
+    - Inactive product rejected with 422 PRODUCT_INACTIVE.
+    - Submit without lines rejected with 422 NO_LINES.
+    - Submit with lines transitions status to OPEN; enforces post-submit permissions (Operator line/header edits rejected with 403/409; Supervisor line quantity and note edits succeed).
+    - Cancellation rules: Operator rejected with 403; Supervisor cancels document with 0 receipts; edits on cancelled document rejected with 409.
+    - List filtering by status and search with pagination.
+
+### Test Output
+```
+> warehouse-receiving-system@1.0.0 test
+> vitest run
+
+ RUN  v3.2.7 C:/Users/Refangga Lintar/Documents/TCL
+
+ ✓ tests/unit/product-rules.test.ts (5 tests) 7ms
+ ✓ tests/unit/env.test.ts (3 tests) 11ms
+ ✓ tests/unit/health.test.ts (5 tests) 10ms
+ ✓ tests/unit/lifecycle.test.ts (16 tests) 14ms
+ ✓ tests/integration/health.test.ts (5 tests) 70ms
+ ✓ tests/unit/auth-guard.test.ts (5 tests) 11ms
+ ✓ tests/integration/products.test.ts (7 tests) 1182ms
+ ✓ tests/integration/receiving-documents.test.ts (10 tests) 1692ms
+ ✓ tests/integration/auth.test.ts (6 tests) 2154ms
+
+ Test Files  9 passed (9)
+      Tests  62 passed (62)
+   Duration  4.85s
+```
+
+`next lint`: 0 warnings, 0 errors.
+`next build`: Successfully compiled and generated static and dynamic routes for `/receiving-documents`, `/receiving-documents/new`, and `/receiving-documents/[id]`.
+
 
 
 
