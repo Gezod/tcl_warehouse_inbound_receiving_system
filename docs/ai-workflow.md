@@ -446,7 +446,70 @@ User approved all 3 items:
 `next lint`: 0 warnings, 0 errors.
 `next build`: Successfully generated optimized production pages for `/inventory`, `/transactions`, `/receiving-documents/[id]`, and receipt API endpoints.
 
+---
 
+## Phase 7A: UI Tokens, Shared Shell, Design Spec, and Dashboard
 
+### User Prompt / Requirements
+- Design specification document (`docs/design.md`) mapping the tokens and component conventions from PRD and Tech Spec:
+  - Tokens: Backgrounds, surfaces, borders, primary/secondary/muted, status pill colors, radii (`rounded-card`, `rounded-input`, `rounded-button`, `rounded-pill`), typography (Inter, monospace for SKUs and RD numbers).
+  - Component patterns: Data tables (48px rows, monospace identifiers, alignment), sheets/modals with backdrop blur and escape dismissal, form inputs with inline `role="alert"` errors.
+- Shared responsive layout (`app/(app)/layout.tsx`):
+  - Fixed desktop sidebar (260px wide) with system brand mark, active route highlighting (`bg-primary text-white font-medium shadow-sm`), role-based navigation (Users link restricted to Supervisor), user profile card with role pill, and logout action.
+  - Mobile responsive top navigation bar and off-canvas slide-out drawer with backdrop.
+  - Session verification via `/api/auth/me` with automatic redirect to `/login` if unauthenticated.
+- Dashboard (`app/(app)/page.tsx`):
+  - Replaced root placeholder `app/page.tsx`.
+  - 4 live summary metric cards: Open documents, Partially received, Active products, Receipts recorded today.
+  - Quick action navigation cards to New Receiving Document, Receiving Documents, Inventory, and Transactions.
+  - "Needs Action" inbound receiving table listing documents in `OPEN` or `PARTIALLY_RECEIVED` status with real-time remaining quantities and direct processing action links.
+- Verification:
+  - Run `npm test`, `npm run lint`, `npm run build`.
+  - Conventional commit: `feat(ui): implement design system specification, shared shell, and dashboard`.
+  - Present dashboard to user for visual review before Phase 7B.
 
+### What Was Produced
+- **Design Specification**:
+  - `docs/design.md`: Exhaustive UI specification covering design principles, tokens (colors, status badges, radii, spacing, typography), layout architecture (desktop sidebar, mobile drawer, workspace max-width 1280px), and component interaction patterns.
+- **Shared Application Shell**:
+  - `app/(app)/layout.tsx`: Responsive navigation shell featuring:
+    - Fixed desktop sidebar and mobile off-canvas drawer with backdrop.
+    - Active route detection (`usePathname()`) applying high-contrast styling.
+    - Role-based navigation filtering: Supervisor-only access for User Management (`/users`).
+    - User profile card showing full name, username, semantic role badge (Supervisor / Operator), and logout button triggering `POST /api/auth/logout`.
+- **Live Operational Dashboard**:
+  - `app/(app)/page.tsx`: Production dashboard featuring:
+    - 4 live metric summary cards querying API endpoints (`/receiving-documents?status=OPEN`, `PARTIALLY_RECEIVED`, `/products?active=true`, `/transactions?dateFrom=...`).
+    - Quick access cards for rapid navigation.
+    - "Needs Action" priority inbound table displaying active receiving documents, expected vs. received quantities, remaining balance, and one-click processing CTA.
+- **Automated Tests & Quality Checks**:
+  - `npm test`: 72 tests passed across 11 test suites.
+  - `npm run lint`: 0 warnings, 0 errors.
+  - `npm run build`: Successfully generated production routes for `/`, `/login`, `/products`, `/receiving-documents`, `/receiving-documents/new`, `/receiving-documents/[id]`, `/inventory`, `/transactions`.
 
+### Test Output
+```
+> warehouse-receiving-system@1.0.0 test
+> vitest run
+
+ RUN  v3.2.7 C:/Users/Refangga Lintar/Documents/TCL
+
+ ✓ tests/unit/product-rules.test.ts (5 tests) 10ms
+ ✓ tests/unit/env.test.ts (3 tests) 11ms
+ ✓ tests/unit/lifecycle.test.ts (16 tests) 17ms
+ ✓ tests/unit/health.test.ts (5 tests) 10ms
+ ✓ tests/unit/receipt-rules.test.ts (7 tests) 15ms
+ ✓ tests/integration/health.test.ts (5 tests) 116ms
+ ✓ tests/unit/auth-guard.test.ts (5 tests) 16ms
+ ✓ tests/integration/products.test.ts (7 tests) 859ms
+ ✓ tests/integration/receiving-documents.test.ts (10 tests) 1002ms
+ ✓ tests/integration/receipts.test.ts (3 tests) 957ms
+ ✓ tests/integration/auth.test.ts (6 tests) 1435ms
+
+ Test Files  11 passed (11)
+      Tests  72 passed (72)
+   Duration  2.45s
+```
+
+`next lint`: 0 warnings, 0 errors.
+`next build`: Successfully compiled and optimized all static and dynamic routes.
